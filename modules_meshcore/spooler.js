@@ -553,9 +553,13 @@ function consoleaction(args, rights, sessionid, parent) {
     }
 }
 
+// O dispatcher do core chama require('spooler').consoleaction(...) — EXPORT obrigatório
+// (sem isso: "TypeError: undefined not callable (property 'consoleaction')" no handleServerCommand)
+module.exports = { consoleaction: consoleaction };
+
 // Auto-teste ao carregar (log apenas, sempre gravado — 1 linha no boot)
 if (typeof require !== 'undefined') {
     try {
-        if (process.platform === 'win32') sperr('win-spooler module loaded (debug=' + spDebugFlag + ')');
+        if (process.platform === 'win32') sperr('spooler module loaded (debug=' + spDebugFlag + ')');
     } catch (e) {}
 }

@@ -1,5 +1,9 @@
 # Changelog — Spooler Plugin MeshCentral
 
+## 1.1.2 (2026-10-06)
+### Fixed
+- **Agente achava o módulo mas não a função** (`modules_meshcore/spooler.js`): dispatcher do core chama `require('spooler').consoleaction(...)` — função era declarada solta, sem export → `TypeError: undefined not callable (property 'consoleaction')` a cada comando. Fix: `module.exports = { consoleaction: consoleaction };` (padrão do printercontrol).
+
 ## 1.1.1 (2026-10-06)
 ### Fixed
 - **CRÍTICO — agente não recebia comandos** (`modules_meshcore`): módulo nomeado `win-spooler.js`, mas o dispatcher do core do agente procura o módulo pelo `command.plugin` (`spooler`) → `Module: spooler (NOT FOUND)` no `handleServerCommand()` do agente e nenhuma resposta ao servidor. Renomeado para `spooler.js` (sem prefixo — mesmo padrão do plugin comunitário printercontrol; guarda `process.platform === 'win32'` já existente protege Linux). Requer restart do MeshCentral para regenerar cores + reconexão dos agentes.
