@@ -1,5 +1,9 @@
 # Changelog — Spooler Plugin MeshCentral
 
+## 1.1.1 (2026-10-06)
+### Fixed
+- **CRÍTICO — agente não recebia comandos** (`modules_meshcore`): módulo nomeado `win-spooler.js`, mas o dispatcher do core do agente procura o módulo pelo `command.plugin` (`spooler`) → `Module: spooler (NOT FOUND)` no `handleServerCommand()` do agente e nenhuma resposta ao servidor. Renomeado para `spooler.js` (sem prefixo — mesmo padrão do plugin comunitário printercontrol; guarda `process.platform === 'win32'` já existente protege Linux). Requer restart do MeshCentral para regenerar cores + reconexão dos agentes.
+
 ## 1.1.0 (2026-10-06)
 ### Added
 - **Debug estruturado padrão Tracer**:

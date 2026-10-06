@@ -1,6 +1,9 @@
 /**
- * Spooler — Agente Windows (injetado no meshcore via addMeshCoreModules,
- * prefixo win- = somente cores Windows).
+ * Spooler — Agente (injetado no meshcore via addMeshCoreModules).
+ *
+ * ⚠️ O arquivo DEVE se chamar spooler.js (= shortName do plugin): o dispatcher
+ * do core procura o módulo pelo command.plugin ("Module: X (NOT FOUND)" caso contrário).
+ * O auto-start abaixo já é guardado com process.platform === 'win32'.
  *
  * Recebe: { action:'plugin', plugin:'spooler', pluginaction, reqid, params }
  * Responde: mesh.SendCommand({ action:'plugin', plugin:'spooler', pluginaction:'agentResult',
