@@ -1,5 +1,14 @@
 # Changelog — Spooler Plugin MeshCentral
 
+## 1.1.6 (2026-10-06)
+### Fixed
+- **CRÍTICO — `runPS` não capturava stdout no agente** (`modules_meshcore/spooler.js`): o `execFile` do MeshAgent **não é o do Node.js** — é shim em C/Duktape (`ILibDuktape_ChildProcess.c`) onde o callback é o evento `exit` com assinatura `(exitCode, signal)`, **sem** `(error, stdout, stderr)`. Resultado: todo comando PS rodava (~130ms, exit 0) e devolvia stdout vazio/null → "PS sem resposta: sentinela ausente" em TODOS os handlers (inventory, spoolerStatus, psInfo...). Local em Node real funcionava — por isso nunca reproduziu no bench. Fix seguindo o padrão do próprio core do MeshCentral (`agents/meshcore.js:1512`): acumular saída via `p.stdout.on('data')`/`p.stderr.on('data')` + embutir `exit\r\n` no fim do script + timeout manual (o shim ignora `options.timeout`/`maxBuffer`) + manter referência do child até o exit (GC mata processo vivo).
+
+### Notes
+- Fonte da análise: código-fonte do MeshAgent (Ylianst/MeshAgent, `microscript/ILibDuktape_ChildProcess.c` + `microstack/ILibProcessPipe.c`) e do MeshCentral (`agents/modules_meshcore/child_process-min.js`, `agents/meshcore.js`).
+- Outras limitações do shim documentadas: sem quoting de args (por isso `-Command -` via stdin), `p.stdin.end()` suportado, listeners `data` precisam existir antes dos dados chegarem.
+- Requer restart do MeshCentral + reconexão dos agentes (mudou `modules_meshcore/`).
+
 ## 1.1.5 (2026-10-06)
 ### Added
 - **Handler `psInfo`** (agente): diagnóstico do ambiente PowerShell no cliente — versão PS, Language Mode (detecta CLM), usuário do processo, 64-bit, PSHOME, status/erro do `Get-Service Spooler`, contagem de `Get-Printer`/`Get-PrinterPort` (cada um com erro capturado). Sintaxe 100% PS 5.1.

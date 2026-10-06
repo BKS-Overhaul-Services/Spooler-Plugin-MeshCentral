@@ -46,18 +46,47 @@ var SENTINEL = '__SPJSON__';
 var PS_HEAD = "$ErrorActionPreference='SilentlyContinue'; " +
     "try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}; ";
 
-// Executa PowerShell e devolve (err, stdout, stderr)
+// Executa PowerShell e devolve (err, stdout, stderr).
+// COMPATÍVEL com Node real E com o shim Duktape/C do MeshAgent, onde:
+//  - callback do execFile = evento 'exit' com (exitCode, signal) — SEM stdout/stderr
+//  - a saída só chega via p.stdout.on('data')/p.stderr.on('data') (streaming; sem
+//    listener a pipe fica pausada e o dado é retido)
+//  - options.timeout/maxBuffer são IGNORADOS pelo shim → timeout manual obrigatório
+//  - child coletado pelo GC é morto → manter referência viva até o exit
+// Padrão validado no core do MeshCentral (agents/meshcore.js:1512):
+//   execFile(ps, ['-command','-'], {}) + stdout.on('data') + stdin.write(cmd + '\r\nexit\r\n')
 function runPS(script, callback) {
     try {
         var child = require('child_process');
         var fs = require('fs');
         var sysnative = process.env['windir'] + '\\Sysnative\\WindowsPowerShell\\v1.0\\powershell.exe';
         var ps = fs.existsSync(sysnative) ? sysnative : (process.env['windir'] + '\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
-        var p = child.execFile(ps, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', '-'], { windowsHide: true, timeout: 120000, maxBuffer: 1024 * 1024 * 8 }, function (err, stdout, stderr) {
-            callback(err, stdout, stderr);
-        });
-        p.stdin.write(script);
+        var stdout = '', stderr = '', done = false, timer = null;
+        var p = child.execFile(ps, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', '-'], {},
+            function (err) {
+                if (done) return; done = true;
+                if (timer) { clearTimeout(timer); timer = null; }
+                var code = 0;
+                if (err) {
+                    if (typeof err === 'number') code = err;                 // shim agente: exitCode puro
+                    else if (typeof err.code === 'number') code = err.code;  // Node real: Error.code
+                    else code = 1;
+                }
+                splog('runPS exit=' + code + ' stdout.len=' + stdout.length + ' stderr.len=' + stderr.length);
+                callback(code ? { code: code, message: 'PowerShell exit ' + code + (stderr ? (' stderr=' + stderr.substring(0, 300)) : '') } : null, stdout, stderr);
+            });
+        if (p.stdout && p.stdout.on) p.stdout.on('data', function (c) { stdout += String(c); });
+        if (p.stderr && p.stderr.on) p.stderr.on('data', function (c) { stderr += String(c); });
+        try { if (p.stdin && p.stdin.on) p.stdin.on('error', function () {}); } catch (e) {}
+        p.stdin.write(script + '\r\nexit\r\n');
         p.stdin.end();
+        // timeout manual (options.timeout é ignorado pelo shim do agente)
+        timer = setTimeout(function () {
+            if (done) return; done = true;
+            splog('runPS timeout 120s stdout.len=' + stdout.length + ' stderr.len=' + stderr.length);
+            try { p.kill(); } catch (e) {}
+            callback({ code: 'TIMEOUT', message: 'PowerShell timeout (120s)' }, stdout, stderr);
+        }, 120000);
     } catch (e) {
         callback(e, null, null);
     }

@@ -1,7 +1,7 @@
 {
   "name": "Spooler — Gerenciador de Impressoras",
   "shortName": "spooler",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "author": "Misael Filho",
   "description": "Gerenciamento centralizado de impressoras Windows via MeshCentral: CRUD de impressoras, portas e drivers, descoberta de impressoras de rede (SNMP), instalação automática em lote, filas de impressão, controle do serviço de spooler, página de teste e acesso ao painel web da impressora.",
   "hasAdminPanel": true,
