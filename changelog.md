@@ -1,5 +1,17 @@
 # Changelog — Spooler Plugin MeshCentral
 
+## 1.1.15 (2026-10-06)
+### Added
+- **Worker PS persistente no agente** (modules_meshcore/spooler.js): 1 processo PowerShell vivo desde o boot; comandos entram via stdin (1 linha JSON `{id, body}`) e saem com sentinela `__SPW__{id, ok, result, error}`. Elimina o spawn (0,5-2s) de TODA operação. Health check 60s (ping), watchdog 90s por comando (mata worker wedgado; exit handler faz restart com backoff, máx 5), fallback transparente para `runJson` spawn-único se o worker estiver down. Todos os handlers JSON (`inventory`, `listDrivers`, `listPorts`, `discover`, `spoolerStatus`, `webPanel`, `psInfo`) agora passam pelo worker via `workerRun()`. Validado com impressoras reais: 3 comandos (ping/summary/getStatus) num único processo, granular respondeu em ~200ms.
+- **Queries granulares**: `getPrinter name=X` (1 impressora, mesma shape do inventory), `getStatus name=X` (default/status/workOffline/jobCount — para polling), `summary` (todas impressoras sem portInfo + status do spooler — ~3x mais leve que inventory).
+- **Cache delta server-side** (spooler.js): `obj.cache[nodeid] = { hash, printers, spooler, ts }`; hash djb2 de `JSON(printers)+spooler`. Novo pluginaction `getDelta {hash}`: se hash bate → resposta `unchanged:true` (~200 bytes); senão pede `summary` ao agente via worker, atualiza cache e responde com payload + hash novo. Mutação concluída invalida o cache do node (próximo delta refetcha — usuário vê impressoras adicionadas/removidas por outros).
+- **Frontend: polling delta 7s** (views/device.handlebars): `setInterval` 7s só com documento visível (`document.hidden` = skip) e sem fetch em voo; 1ª carga usa `getDelta hash=null` (server devolve summary completo); `applyDelta` atualiza badges de status/jobCount na tabela existente via `data-prn-status` (re-render completo só na 1ª carga ou mudança estrutural).
+
+### Notes
+- Custo por poll com cache quente: **~200 bytes de WS** (unchanged). Com mudança: 1 worker query (~200-400ms no cliente, sem spawn). Mutação: 1 WS extra para invalidar.
+- `Invoke-Expression` no worker executa apenas bodies gerados pelo próprio agente (params sanitizados por `q()` antes) — superfície de ataque equivalente ao spawn anterior.
+- Requer restart do MeshCentral + reconexão dos agentes.
+
 ## 1.1.14 (2026-10-06)
 ### Added
 - **Cadeia de ações: fila serial + resposta em 2 fases + verificação pós-operação** (modules_meshcore/spooler.js):

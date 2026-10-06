@@ -41,6 +41,119 @@ function sperr(str) {
 }
 
 var SENTINEL = '__SPJSON__';
+var WORKER_SENTINEL = '__SPW__';
+
+// ------------------- worker PS persistente (v1.1.15) -------------------
+// 1 processo PowerShell vivo desde o boot: cada comando entra via stdin (uma linha
+// JSON { id, body }) e a resposta sai com sentinela __SPW__{...}. Elimina o custo
+// de spawn (0,5-2s) de TODA operação. Health check 60s + watchdog 90s por comando
+// + restart com backoff. Fallback automático para runJson (spawn único) se down.
+var wk = {
+    child: null, seq: 1, pending: {}, buffer: '', starting: false,
+    restarts: 0, lastActivity: 0
+};
+
+function workerSpawn() {
+    if (wk.starting || wk.child) return;
+    wk.starting = true;
+    try {
+        var child = require('child_process');
+        var fs = require('fs');
+        var sysnative = process.env['windir'] + '\\Sysnative\\WindowsPowerShell\\v1.0\\powershell.exe';
+        var ps = fs.existsSync(sysnative) ? sysnative : (process.env['windir'] + '\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+        var p = child.execFile(ps, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', '-'], {},
+            function (code) { // 'exit' no shim — worker morreu
+                wk.starting = false;
+                splog('worker exit code=' + code);
+                var pend = wk.pending; wk.pending = {};
+                for (var id in pend) { try { pend[id]({ ok: false, error: 'worker PS morreu (exit ' + code + ')' }); } catch (e) {} }
+                wk.child = null; wk.buffer = '';
+                if (wk.restarts < 5) { wk.restarts++; setTimeout(workerSpawn, 3000); }
+            });
+        if (p.stdout && p.stdout.on) p.stdout.on('data', function (c) { workerFeed(String(c)); });
+        if (p.stderr && p.stderr.on) p.stderr.on('data', function (c) { splog('worker stderr: ' + String(c).substring(0, 200)); });
+        try { if (p.stdin && p.stdin.on) p.stdin.on('error', function () {}); } catch (e) {}
+        // loop eterno: lê 1 linha JSON do stdin → executa body ($out/$err2) → responde com sentinela
+        p.stdin.write(
+            "$ErrorActionPreference='SilentlyContinue'; " +
+            "try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}; " +
+            "while ($true) { " +
+            "  $line = [Console]::In.ReadLine(); " +
+            "  if ($null -eq $line) { break } " +
+            "  $req = $line | ConvertFrom-Json; " +
+            "  $out = $null; $err2 = $null; " +
+            "  try { Invoke-Expression $req.body } catch { $err2 = $_.Exception.Message } " +
+            "  $__j = 'null'; if ($null -ne $out) { $__j = @($out) | ConvertTo-Json -Depth 5 -Compress } " +
+            "  $resp = @{ id = $req.id; ok = [bool](-not $err2); result = $__j; error = $err2 }; " +
+            "  Write-Output ('" + WORKER_SENTINEL + "' + ($resp | ConvertTo-Json -Compress -Depth 3)) " +
+            "} "
+        );
+        wk.child = p;
+        wk.buffer = '';
+        wk.lastActivity = Date.now();
+        splog('worker spawned');
+    } catch (e) {
+        wk.starting = false;
+        sperr('worker spawn error: ' + e.message);
+    }
+}
+
+// alimenta o buffer e despacha respostas completas (1 por linha com sentinela)
+function workerFeed(chunk) {
+    wk.lastActivity = Date.now();
+    wk.buffer += chunk;
+    var idx;
+    while ((idx = wk.buffer.indexOf(WORKER_SENTINEL)) >= 0) {
+        var nl = wk.buffer.indexOf('\n', idx);
+        var line = (nl >= 0) ? wk.buffer.substring(idx + WORKER_SENTINEL.length, nl) : wk.buffer.substring(idx + WORKER_SENTINEL.length);
+        if (nl >= 0) wk.buffer = wk.buffer.substring(nl + 1); else wk.buffer = '';
+        var resp = parseJSONSafe(line.trim());
+        if (resp && resp.id && wk.pending[resp.id]) {
+            var cb = wk.pending[resp.id];
+            delete wk.pending[resp.id];
+            var result = null;
+            if (resp.ok && resp.result != null && resp.result !== 'null') {
+                result = parseJSONSafe(String(resp.result));
+                if (result === null) result = String(resp.result);
+            }
+            try { cb({ ok: !!resp.ok, result: result, error: resp.error || null }); } catch (e) { sperr('worker cb: ' + e.message); }
+        }
+    }
+}
+
+// executa body no worker (fallback: runJson spawn-únimo se worker indisponível)
+function workerRun(body, cb) {
+    if (!wk.child || !wk.child.stdin) {
+        runJson(body, cb);
+        return;
+    }
+    var id = 'w' + (wk.seq++);
+    wk.pending[id] = cb;
+    try {
+        wk.child.stdin.write(JSON.stringify({ id: id, body: body }) + '\n');
+        setTimeout(function () { // watchdog por comando (shim ignora timeouts)
+            if (wk.pending[id]) {
+                delete wk.pending[id];
+                sperr('worker watchdog ' + id + ' — matando worker');
+                try { wk.child.kill(); } catch (e) {}
+            }
+        }, 90000);
+    } catch (e) {
+        delete wk.pending[id];
+        sperr('worker write: ' + e.message);
+        runJson(body, cb);
+    }
+}
+
+// health check a cada 60s
+setInterval(function () {
+    try {
+        if (!wk.child) { workerSpawn(); return; }
+        workerRun("$out = [pscustomobject]@{ ping = 1 }", function (r) {
+            if (!r.ok) splog('worker ping falhou: ' + (r.error || '?'));
+        });
+    } catch (e) {}
+}, 60000);
 
 // Cabeçalho comum: encoding UTF-8 + tolerância a erros não-fatais
 var PS_HEAD = "$ErrorActionPreference='SilentlyContinue'; " +
@@ -232,9 +345,9 @@ var MUTATION_HANDLERS = {};
 
 var handlers = {
 
-    // Inventário de impressoras
+    // Inventário de impressoras (completo — agora via worker PS persistente)
     inventory: function (nodeid, reqid, params, res) {
-        runJson(
+        workerRun(
             "$out = @(); " +
             "$def = @(); " +
             "try { $def = @(Get-CimInstance -ClassName Win32_Printer | Where-Object { $_.Default } | Select-Object -ExpandProperty Name) } catch {}; " +
@@ -253,6 +366,76 @@ var handlers = {
             res
         );
     },
+
+    // ---- queries granulares (v1.1.15) — 1 impressora / 1 campo, custo mínimo ----
+
+    // Uma impressora específica (mesma shape do inventory para reusar renderer)
+    getPrinter: function (nodeid, reqid, params, res) {
+        var name = q(params.name);
+        if (!name) { res({ ok: false, error: 'name obrigatorio' }); return; }
+        workerRun(
+            "$out = $null; " +
+            "$def = @(); " +
+            "try { $def = @(Get-CimInstance -ClassName Win32_Printer | Where-Object { $_.Default } | Select-Object -ExpandProperty Name) } catch {}; " +
+            "$p = Get-Printer -Name '" + name + "' -ErrorAction SilentlyContinue; " +
+            "if ($p) { " +
+            "  $pi = $null; " +
+            "  try { $pi = Get-PrinterPort -Name $p.PortName -ErrorAction Stop } catch {}; " +
+            "  $out = [pscustomobject]@{ " +
+            "    name=$p.Name; driver=$p.DriverName; port=$p.PortName; shared=[bool]$p.Shared; " +
+            "    shareName=$p.ShareName; published=[bool]$p.Published; default=($def -contains $p.Name); " +
+            "    workOffline=[bool]$p.WorkOffline; printerStatus=$p.PrinterStatus; " +
+            "    attributes=$p.Attributes; priority=$p.Priority; " +
+            "    portInfo=$(if($pi){[pscustomobject]@{name=$pi.Name; description=$pi.Description; printerHostAddress=$pi.PrinterHostAddress; portNumber=$pi.PortNumber; protocol=$pi.Protocol; snmp=$pi.SNMPEnabled}}else{$null}) " +
+            "  } " +
+            "} ",
+            function (r) {
+                if (r.ok && (!r.result || !r.result.length || !r.result[0])) { res({ ok: false, error: 'Impressora nao encontrada: ' + params.name }); return; }
+                if (r.ok) r.result = r.result[0];
+                res(r);
+            }
+        );
+    },
+
+    // Só o status (default/paused/workOffline/printerStatus) de 1 impressora — poll do frontend
+    getStatus: function (nodeid, reqid, params, res) {
+        var name = q(params.name);
+        if (!name) { res({ ok: false, error: 'name obrigatorio' }); return; }
+        workerRun(
+            "$out = $null; " +
+            "$def = @(); " +
+            "try { $def = @(Get-CimInstance -ClassName Win32_Printer | Where-Object { $_.Default } | Select-Object -ExpandProperty Name) } catch {}; " +
+            "$p = Get-Printer -Name '" + name + "' -ErrorAction SilentlyContinue; " +
+            "if ($p) { $out = [pscustomobject]@{ name=$p.Name; default=($def -contains $p.Name); printerStatus=$p.PrinterStatus; workOffline=[bool]$p.WorkOffline; jobCount=$(@(Get-PrintJob -PrinterName $p.Name -ErrorAction SilentlyContinue).Count) } } ",
+            function (r) {
+                if (r.ok && (!r.result || !r.result.length || !r.result[0])) { res({ ok: false, error: 'Impressora nao encontrada: ' + params.name }); return; }
+                if (r.ok) r.result = r.result[0];
+                res(r);
+            }
+        );
+    },
+
+    // Resumo leve para polling da aba (tudo de uma vez, sem portInfo — ~3x mais leve que inventory)
+    summary: function (nodeid, reqid, params, res) {
+        workerRun(
+            "$out = @(); " +
+            "$def = @(); " +
+            "try { $def = @(Get-CimInstance -ClassName Win32_Printer | Where-Object { $_.Default } | Select-Object -ExpandProperty Name) } catch {}; " +
+            "$svc = Get-Service -Name Spooler -ErrorAction SilentlyContinue; " +
+            "foreach ($p in @(Get-Printer)) { " +
+            "  $out += [pscustomobject]@{ name=$p.Name; driver=$p.DriverName; port=$p.PortName; shared=[bool]$p.Shared; default=($def -contains $p.Name); printerStatus=$p.PrinterStatus; workOffline=[bool]$p.WorkOffline; jobCount=$(@(Get-PrintJob -PrinterName $p.Name -ErrorAction SilentlyContinue).Count) } " +
+            "} " +
+            "$svcStatus = 'Unknown'; if ($svc) { $svcStatus = $svc.Status.ToString() }; " +
+            "$__svc = $svcStatus; " +
+            "$res2 = [pscustomobject]@{ printers=$out; spooler=$__svc } ",
+            function (r) {
+                if (r.ok && (!r.result || !r.result.length || !r.result[0])) { res({ ok: false, error: 'summary vazio' }); return; }
+                if (r.ok) r.result = r.result[0];
+                res(r);
+            }
+        );
+    },
+
 
     // Adicionar impressora — com VERIFICAÇÃO PÓS-AÇÃO na cadeia (v1.1.14):
     // 1) Add-PrinterPort/Add-Printer  2) poll Get-Printer até a fila existir (ou erro)
@@ -399,16 +582,16 @@ var handlers = {
 
     // Drivers instalados
     listDrivers: function (nodeid, reqid, params, res) {
-        runJson(
-            "$out = @(Get-PrinterDriver | Select-Object Name, Manufacturer, DriverVersion, PrinterEnvironment, Architecture)",
+        workerRun(
+                        "$out = @(Get-PrinterDriver | Select-Object Name, Manufacturer, DriverVersion, PrinterEnvironment, Architecture)",
             res
         );
     },
 
     // Portas de impressora
     listPorts: function (nodeid, reqid, params, res) {
-        runJson(
-            "$out = @(Get-PrinterPort | Select-Object Name, Description, PrinterHostAddress, PortNumber, Protocol, SNMPEnabled)",
+        workerRun(
+                        "$out = @(Get-PrinterPort | Select-Object Name, Description, PrinterHostAddress, PortNumber, Protocol, SNMPEnabled)",
             res
         );
     },
@@ -631,8 +814,8 @@ var handlers = {
     // Filas de impressão
     getJobs: function (nodeid, reqid, params, res) {
         var name = params.name ? q(params.name) : null;
-        runJson(
-            "$out = @(Get-PrintJob" + (name ? " -PrinterName '" + name + "'" : "") + " | Select-Object Id, PrinterName, DocumentName, UserName, JobStatus, SubmittedTime, PagesPrinted, TotalPages, Size)",
+        workerRun(
+                        "$out = @(Get-PrintJob" + (name ? " -PrinterName '" + name + "'" : "") + " | Select-Object Id, PrinterName, DocumentName, UserName, JobStatus, SubmittedTime, PagesPrinted, TotalPages, Size)",
             res
         );
     },
@@ -669,8 +852,8 @@ var handlers = {
 
     // Status do serviço Spooler
     spoolerStatus: function (nodeid, reqid, params, res) {
-        runJson(
-            "$svc = Get-Service -Name Spooler -ErrorAction SilentlyContinue; " +
+        workerRun(
+                        "$svc = Get-Service -Name Spooler -ErrorAction SilentlyContinue; " +
             "$out = $null; " +
             "if ($svc) { $out = [pscustomobject]@{ status=$svc.Status.ToString(); startType=$svc.StartType.ToString(); name=$svc.Name } }",
             function (r) {
@@ -704,8 +887,8 @@ var handlers = {
     webPanel: function (nodeid, reqid, params, res) {
         var ip = q(params.ip || '');
         if (!ip || !/^[\d.]+$/.test(ip)) { res({ ok: false, error: 'IP invalido' }); return; }
-        runJson(
-            "$out = $null; " +
+        workerRun(
+                        "$out = $null; " +
             "try { " +
             "  $r = Invoke-WebRequest -Uri ('http://' + '" + ip + "' + '/') -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop; " +
             "  $out = [pscustomobject]@{ status=[int]$r.StatusCode; contentType=$r.Headers['Content-Type']; body=$r.Content }; " +
@@ -721,8 +904,8 @@ var handlers = {
     // Diagnóstico do ambiente PowerShell no cliente (v1.1.5)
     // Sintaxe 100% PS 5.1: nada de && / || / ternário (parse error → $out vazio silencioso)
     psInfo: function (nodeid, reqid, params, res) {
-        runJson(
-            "$out = @(); " +
+        workerRun(
+                        "$out = @(); " +
             "$psv = $null; try { $psv = $PSVersionTable.PSVersion.ToString() } catch {}; " +
             "$lm = $null; try { $lm = $ExecutionContext.SessionState.LanguageMode.ToString() } catch {}; " +
             "$who = $null; try { $who = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name } catch {}; " +
@@ -750,12 +933,23 @@ var handlers = {
     }
 };
 
+// Popula a fila de mutações com os handlers reais (v1.1.14)
+['addPrinter', 'deletePrinter', 'renamePrinter', 'setDefaultPrinter', 'setPrinterConfig',
+ 'pausePrinter', 'resumePrinter', 'deletePort', 'jobAction', 'clearQueue', 'spoolerAction']
+    .forEach(function (op) { MUTATION_HANDLERS[op] = handlers[op]; });
+// addFoundPrinter é roteado para addPrinter dentro do próprio handler — fica fora da
+// re-mapa pois handlers.addFoundPrinter chama handlers.addPrinter diretamente.
+MUTATION_HANDLERS.addFoundPrinter = function (nodeid, reqid, params, res) {
+    handlers.addFoundPrinter(nodeid, reqid, params, res);
+};
+
 // ------------------------- dispatcher -------------------------
 
 var ALLOWED = ['inventory', 'addPrinter', 'deletePrinter', 'renamePrinter', 'setDefaultPrinter',
     'setPrinterConfig', 'pausePrinter', 'resumePrinter', 'testPage', 'listDrivers', 'listPorts',
     'deletePort', 'discover', 'addFoundPrinter', 'getJobs', 'jobAction', 'clearQueue',
-    'spoolerStatus', 'spoolerAction', 'webPanel', 'psInfo', 'setDebug'];
+    'spoolerStatus', 'spoolerAction', 'webPanel', 'psInfo', 'setDebug',
+    'getPrinter', 'getStatus', 'summary'];
 
 function consoleaction(args, rights, sessionid, parent) {
     mesh = parent;

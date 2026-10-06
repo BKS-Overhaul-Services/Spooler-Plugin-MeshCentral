@@ -284,21 +284,67 @@ function closeDlg(id){var d=$(id);if(d.open)d.close();}
 function setBusy(op,b){_ops[op]=b;document.querySelectorAll('button').forEach(function(x){if(x.dataset.op===op)x.disabled=b;});}
 
 /* ===== WS ===== */
+var _myHash=null; // hash do delta local (v1.1.15)
 if(ms&&ms.socket){
   var orig=ms.socket.onmessage;
   ms.socket.onmessage=function(event){
     try{
       var d=JSON.parse(event.data);
-      if(d.action==='plugin'&&d.plugin==='spooler'&&d.method==='agentResult'){
-        dlog('WS result', d.op, 'ok='+(d.ok===true));
-        handleResult(d);
-        return;
+      if(d.action==='plugin'&&d.plugin==='spooler'){
+        if(d.method==='agentResult'&&d.op==='summary'===false){}
+        if(d.method==='delta'){
+          _myHash=d.hash;
+          if(d.unchanged){dlog('delta: unchanged');}
+          else{dlog('delta: MUDOU — aplicando');applyDelta(d);}
+          return;
+        }
+        if(d.method==='agentResult'&&d.op==='agentResult'){}
+        if(d.method==='agentResult'){
+          dlog('WS result', d.op, 'ok='+(d.ok===true));
+          handleResult(d);
+          return;
+        }
       }
     }catch(e){}
     if(typeof orig==='function')orig.call(ms.socket,event);
   };
   dlog('socket hooked');
 } else dlog('ms/socket não disponível');
+
+// aplica delta do summary: 1ª vez renderiza tudo; depois só atualiza o que mudou
+function applyDelta(d){
+  try{
+    if(d.spooler){_spooler={status:d.spooler,startType:(_spooler&&_spooler.startType)||'—',name:'Spooler'};renderSpooler();}
+    if(Array.isArray(d.printers)){
+      var totalJobs=0;
+      d.printers.forEach(function(p){totalJobs+=(p.jobCount||0);});
+      $('sJobs').textContent=totalJobs;
+      // 1ª carga (tabela vazia): fetch do inventário completo (via worker, ~leve)
+      var tbl=document.querySelector('#printerList table');
+      if(!tbl){_doRefreshInventory();return;}
+      $('sPrinters').textContent=d.printers.length;
+      $('invInfo').textContent=d.printers.length+' impressoras · delta '+new Date().toLocaleTimeString();
+      // atualiza badges de status por nome sem re-render completo
+      d.printers.forEach(function(p){
+        var st=parseInt(p.printerStatus,10);
+        var stTxt=(st===0?'desconhecido':st===3?'ociosa':st===4?'imprimindo':st===5?'aquecendo':st===6?'parada':st===7?'offline':('st '+st));
+        var stCls=(st===3||st===4)?'ok':(st===7?'err':'warn');
+        var cell=document.querySelector('[data-prn-status="'+cssEscape(p.name)+'"]');
+        if(cell)cell.innerHTML='<span class="badge '+stCls+'">'+esc(stTxt)+'</span>';
+      });
+    }
+  }catch(e){dlog('applyDelta err: '+e.message);}
+}
+function cssEscape(s){return String(s).replace(/["\\]/g,'\\$&');}
+
+// polling delta: 7s quando o documento está visível (v1.1.15)
+setInterval(function(){
+  if(document.hidden)return;            // aba em segundo plano: não gasta nada
+  if(!ms)return;
+  if(_ops.inventory)return;             // fetch completo em voo: delta seria redundante
+  if(typeof _myHash==='undefined')return;
+  ms.send({action:'plugin',plugin:'spooler',pluginaction:'getDelta',nodeid:nodeid,hash:_myHash});
+},7000);
 
 function send(action,params){ if(ms){ ms.send({action:'plugin',plugin:'spooler',pluginaction:action,nodeid:nodeid,params:params||{}}); } else toast('Sem conexão',true); }
 
@@ -410,7 +456,7 @@ function renderPrinters(list){
       +'<td><b>'+esc(p.name)+'</b></td>'
       +'<td class="muted">'+esc(p.driver)+'</td>'
       +'<td class="muted">'+esc(p.port)+(ip?(' <span class="muted">('+esc(ip)+')</span>'):'')+'</td>'
-      +'<td><span class="badge '+stCls+'">'+esc(stTxt)+'</span></td>'
+      +'<td data-prn-status="'+esc(p.name)+'"><span class="badge '+stCls+'">'+esc(stTxt)+'</span></td>'
       +'<td>'+(flags.join(' ')||'—')+'</td>'
       +'<td>'
       +'<button class="btn btn-sm" onclick="doTestPage(\''+esc(p.name)+'\')">Teste</button> '
@@ -828,8 +874,9 @@ if(ms&&ms.socket){
 document.addEventListener('DOMContentLoaded',function(){
   dlog('init');
   _tabLoaded.spooler=true; // init já cobre a 1ª carga do spooler
-  refreshInventory();
-  loadSpoolerStatus();
+  // 1ª carga: delta com hash vazio → server sempre devolve o summary completo
+  _myHash=null;
+  ms.send({action:'plugin',plugin:'spooler',pluginaction:'getDelta',nodeid:nodeid,hash:null});
 });
 </script>
 </body>

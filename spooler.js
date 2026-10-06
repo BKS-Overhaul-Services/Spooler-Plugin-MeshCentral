@@ -51,6 +51,17 @@ module.exports.spooler = function (parent) {
     obj.db = null;
     obj.mdb = obj.meshServer.db;
     obj.pending = {};   // reqid → { sid, nodeid, op, user, ts }
+    obj.cache = {};     // nodeid → { hash, printers[], spooler, ts } (cache delta, v1.1.15)
+
+    // hash curto p/ delta (não é crypto, é change detection)
+    obj.fastHash = function (s) {
+        var h = 5381, i = String(s == null ? '' : s).length;
+        while (i) h = (h * 33) ^ String(s).charCodeAt(--i);
+        return (h >>> 0).toString(36);
+    };
+    obj.computeHash = function (printers, spooler) {
+        return obj.fastHash(JSON.stringify(printers) + '|' + spooler);
+    };
 
     obj.server_startup = function () {
         try {
@@ -200,6 +211,24 @@ module.exports.spooler = function (parent) {
                 if (!command.ok) {
                     obj.audit(p.user, p.nodeid, p.op, command.target || null, command.error || 'erro no agente', false);
                 }
+                // summary: atualiza cache e responde com hash (fluxo delta, v1.1.15)
+                if ((command.op || p.op) === 'summary' && command.ok && command.result) {
+                    var printers = command.result.printers || [];
+                    var spooler = command.result.spooler || 'Unknown';
+                    var hash = obj.computeHash(printers, spooler);
+                    obj.cache[p.nodeid] = { hash: hash, printers: printers, spooler: spooler, ts: Date.now() };
+                    obj.send(p.sid, {
+                        action: 'plugin', plugin: 'spooler', method: 'delta',
+                        nodeid: p.nodeid, unchanged: false, hash: hash,
+                        printers: printers, spooler: spooler
+                    });
+                    return;
+                }
+                // mutação concluída: invalida o cache do node (próximo delta refetcha)
+                if (p.mut && obj.cache[p.nodeid]) {
+                    delete obj.cache[p.nodeid];
+                    SP_LOG.raw('cache invalidado (mutação) node=' + p.nodeid);
+                }
                 obj.send(p.sid, {
                     action: 'plugin', plugin: 'spooler', method: 'agentResult',
                     op: command.op || p.op, nodeid: p.nodeid, reqid: reqid,
@@ -219,6 +248,26 @@ module.exports.spooler = function (parent) {
                 case 'getPrinters':
                     obj.agentRequest(command, sid, user);
                     break;
+
+                // ---- polling leve + granular (v1.1.15) ----
+                case 'summary':
+                case 'getPrinter':
+                case 'getStatus':
+                    obj.agentRequest(command, sid, user);
+                    break;
+
+                // ---- delta: cliente diz qual hash tem; server responde só se mudou ----
+                case 'getDelta': {
+                    var cached = obj.cache[command.nodeid];
+                    if (cached && cached.hash === command.hash) {
+                        // nada mudou — resposta ~200 bytes em vez do payload completo
+                        obj.send(sid, { action: 'plugin', plugin: 'spooler', method: 'delta', nodeid: command.nodeid, unchanged: true, hash: cached.hash });
+                    } else {
+                        // pede summary ao agente (e atualiza o cache quando chegar)
+                        obj.agentRequest({ nodeid: command.nodeid, pluginaction: 'summary', params: {}, _deltaFor: sid }, sid, user);
+                    }
+                    break;
+                }
 
                 // ---- CRUD impressoras ----
                 case 'addPrinter':
