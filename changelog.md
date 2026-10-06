@@ -1,5 +1,15 @@
 # Changelog — Spooler Plugin MeshCentral
 
+## 1.1.3 (2026-10-06)
+### Fixed
+- **Plumbing PowerShell→JSON reescrito** (`modules_meshcore/spooler.js`):
+  - Protocolo sentinela `__SPJSON__`: resposta isolada de banners/ruído do stdout.
+  - UTF-8 (`[Console]::OutputEncoding`) em todos os scripts — acentos corretos.
+  - Pipeline vazio → `[]` (`ConvertTo-Json` do PS 5.1 não imprime nada para `@()` vazio — causa do "JSON invalido" no listDrivers).
+  - Erros incluem `stderr` real (exit code + 300 chars) em vez de mensagem genérica.
+  - Handlers JSON (`runJson`) e textuais (`runText`) unificados; mensagens de erro 100% ASCII (stdin do agente não garante UTF-8).
+  - `spoolerStatus`/`webPanel` agora validam objeto vazio e retornam erro explícito.
+
 ## 1.1.2 (2026-10-06)
 ### Fixed
 - **Agente achava o módulo mas não a função** (`modules_meshcore/spooler.js`): dispatcher do core chama `require('spooler').consoleaction(...)` — função era declarada solta, sem export → `TypeError: undefined not callable (property 'consoleaction')` a cada comando. Fix: `module.exports = { consoleaction: consoleaction };` (padrão do printercontrol).
