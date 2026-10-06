@@ -1,5 +1,18 @@
 # Changelog — Spooler Plugin MeshCentral
 
+## 1.1.9 (2026-10-06)
+### Added
+- **Descoberta sem varredura de rede** (`modules_meshcore/spooler.js:discover`): novo parâmetro `mode` com 3 estratégias:
+  - **`wsd`** (padrão): WS-Discovery — o mesmo protocolo multicast (UDP 239.255.255.250:3702) que o wizard "Adicionar impressora" do Windows usa. 1 pacote Probe, respostas em ~5-10s, zero flood. Retorna IP + XAddrs de cada PrintDeviceType.
+  - **`ad`**: printQueue publicados no Active Directory via LDAP (System.DirectoryServices, sem RSAT). Lista impressoras compartilhadas por print servers do domínio: nome, servidor, local, driver, UNC.
+  - **`tcp`**: fallback — varredura TCP 9100 da v1.1.8 (1 processo, sockets async), rebaixada a último recurso.
+- **UI do discover reescrita** (views/device.handlebars): seletor de modo com hint contextual por estratégia; render dedicado por formato (tabela AD, cards WSD com XAddrs, cards TCP com botão instalar); mensagens de vazio orientando alternativas.
+
+### Notes
+- Motivação: TCP scan não achava impressoras em ambientes com VLANs/firewall e o usuário pediu alternativa nativa. WSD é o mesmo mecanismo do próprio Windows; AD é a fonte oficial em domínio.
+- Validado em PS 5.1: WSD ~7,8s (0 impressoras no bench, sem WSD habilitado), AD ~1,5s (0 printQueue no domínio BKSSERVICES — esperado, sem print server publicado).
+- Em ambientes sem WSD/AD, o TCP 9100 continua disponível como fallback manual.
+
 ## 1.1.8 (2026-10-06)
 ### Security / Fixed
 - **CRÍTICO — descoberta SNMP causava BSOD em produção** (`modules_meshcore/spooler.js:discover`): o desenho anterior usava `Start-Job` dentro de `1..254` — no PS 5.1 cada job é um **processo `powershell.exe` novo** → 254 processos simultâneos (~50-100MB commit cada) + 254 sockets UDP num instante. Em cliente com driver HP/Epson isso exauriu recursos de kernel e dero **tela azul (bugcheck real)**. Reescrito **sem criar nenhum processo extra**: TCP `ConnectAsync` na porta 9100 (RAW printing — presente em praticamente toda impressora de rede) com 254 sockets async **num único processo PS**, `Task.WaitAll` com teto de 8s, DNS reverso com timeout 1,5s só nos hosts achados. Medido em bench: 1 processo PS, ~4s total, carga desprezível. Timeout por conexão agora limitado a 500-2000ms (era 200-5000ms).

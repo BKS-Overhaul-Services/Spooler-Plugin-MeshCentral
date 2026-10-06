@@ -98,14 +98,20 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
 <!-- ===== DESCOBERTA ===== -->
 <div id="pane-discover" class="pane">
   <div class="panel">
-    <div class="panel-title">Procurar impressoras de rede (porta RAW 9100)</div>
+    <div class="panel-title">Procurar impressoras</div>
     <div class="toolbar">
-      <input type="text" id="discRange" placeholder="192.168.0 (3 octetos, vazio = auto)" style="width:230px">
-      <select id="discTimeout"><option value="1000">Timeout 1s</option><option value="2000">2s</option><option value="500">0.5s</option></select>
+      <select id="discMode" style="min-width:250px" onchange="discModeChanged()">
+        <option value="wsd">WSD — nativo (como o wizard do Windows)</option>
+        <option value="ad">Active Directory — impressoras do domínio</option>
+        <option value="tcp">Varredura TCP 9100 (último recurso)</option>
+      </select>
+      <input type="text" id="discRange" placeholder="range p/ TCP: 192.168.0" style="width:200px;display:none">
+      <select id="discTimeout" style="display:none"><option value="1000">Timeout 1s</option><option value="2000">2s</option><option value="500">0.5s</option></select>
       <button class="btn btn-primary" id="discBtn" onclick="startDiscover()">Procurar</button>
       <button class="btn btn-primary" id="installSelBtn" onclick="installSelected()" disabled>Instalar selecionadas (0)</button>
       <span class="muted" id="discInfo"></span>
     </div>
+    <p class="muted" id="discHint" style="margin-bottom:8px">WSD: multicast local (~5s). Impressoras precisam estar ligadas e na mesma VLAN.</p>
     <div id="discResult"><div class="empty">Nenhuma busca executada.</div></div>
   </div>
 </div>
@@ -313,7 +319,7 @@ function handleResult(d){
     case 'pausePrinter': case 'resumePrinter': toast('Operação aplicada'); refreshInventory(); break;
     case 'testPage': toast('Página de teste enviada'); break;
     case 'deletePort': toast('Porta excluída'); loadPorts(); break;
-    case 'discover': renderFound(r||[]); break;
+    case 'discover': renderFound(r||[], d.mode||_discMode); break;
     case 'getJobs': renderJobs(r||[]); break;
     case 'jobAction': toast('Job atualizado'); loadJobs(); break;
     case 'clearQueue': toast('Fila limpa'); loadJobs(); break;
@@ -461,30 +467,72 @@ function doDelete(){
 }
 
 /* ===== DESCOBERTA ===== */
+var _discMode='wsd';
 function showDiscoverDlg(){switchTab('discover');}
+function discModeChanged(){
+  _discMode=$('discMode').value;
+  var isTcp=(_discMode==='tcp');
+  $('discRange').style.display=isTcp?'':'none';
+  $('discTimeout').style.display=isTcp?'':'none';
+  var hints={wsd:'WSD: multicast local (~5s). Impressoras precisam estar ligadas e na mesma VLAN.',
+    ad:'AD: lista impressoras publicadas no domínio (print servers). Não precisa varredura.',
+    tcp:'TCP: varre a sub-rede na porta 9100 (RAW). Mais lento; último recurso.'};
+  $('discHint').textContent=hints[_discMode]||'';
+}
 function startDiscover(){
-  $('discResult').innerHTML='<div class="loading">Procurando impressoras na rede (pode levar até 10s)...</div>';
+  var mode=_discMode;
+  var msg={wsd:'Procurando impressoras via WSD (até ~12s)...',ad:'Consultando Active Directory...',tcp:'Varrendo sub-rede porta 9100 (até ~10s)...'};
+  $('discResult').innerHTML='<div class="loading">'+(msg[mode]||'Procurando...')+'</div>';
   $('discInfo').textContent='';
   $('installSelBtn').disabled=true;
   _selected={};
   setBusy('discover',true);
-  send('discover',{range:$('discRange').value.trim(),timeout:parseInt($('discTimeout').value,10)});
+  send('discover',{mode:mode,range:$('discRange').value.trim(),timeout:parseInt($('discTimeout').value,10)});
 }
-function renderFound(list){
-  _found=list;
-  if(!list.length){$('discResult').innerHTML='<div class="empty">Nenhuma impressora encontrada na rede. Verifique o range/timeout.</div>';return;}
-  $('discInfo').textContent=list.length+' impressora(s) encontrada(s)';
-  var h='';
-  list.forEach(function(f){
+function renderFound(list,mode){
+  _found=list||[];
+  var errs=_found.filter(function(f){return f.error;});
+  if(errs.length){$('discResult').innerHTML='<div class="empty">Erro: '+esc(errs[0].error)+'</div>';return;}
+  if(!_found.length){
+    var empty={wsd:'Nenhuma impressora respondeu ao WSD. Verifique se estão ligadas, na mesma VLAN (multicast 239.255.255.250:3702 liberado) e com WSD habilitado. Alternativa: tente "Active Directory" ou "TCP 9100".',
+      ad:'Nenhuma printQueue no Active Directory (nenhum print server publicou impressoras no domínio). Tente "WSD" ou "TCP 9100".',
+      tcp:'Nenhum host com porta 9100 aberta na sub-rede.'};
+    $('discResult').innerHTML='<div class="empty">'+esc(empty[mode]||'Nada encontrado.')+'</div>';return;}
+  $('discInfo').textContent=_found.length+' encontrada(s)';
+  if(mode==='ad'){
+    var h='<table class="tbl"><thead><tr><th></th><th>Impressora</th><th>Servidor</th><th>Local</th><th>Driver</th></tr></thead><tbody>';
+    _found.forEach(function(f){
+      var key=f.unc||(f.host+'\\'+f.name);
+      h+='<tr><td><input type="checkbox" onchange="toggleSel(\''+esc(key)+'\')"></td>'
+        +'<td><b>'+esc(f.name||'—')+'</b></td><td>'+esc(f.host||'—')+'</td>'
+        +'<td>'+esc(f.location||'—')+'</td><td class="muted">'+esc(f.driver||'—')+'</td></tr>';
+    });
+    h+='</tbody></table>';$('discResult').innerHTML=h;return;
+  }
+  if(mode==='wsd'){
+    var h2='';
+    _found.forEach(function(f,idx){
+      var key=String(idx);
+      h2+='<div class="foundcard">'
+        +'<input type="checkbox" onchange="toggleSel(\''+esc(key)+'\')">'
+        +'<div class="ip">'+esc(f.ip)+'</div>'
+        +'<div style="flex:1"><div class="muted">'+esc((f.xaddrs||'—').substring(0,90))+'</div></div>'
+        +'</div>';
+    });
+    $('discResult').innerHTML='<p class="muted" style="margin-bottom:6px">WSD descobre o dispositivo; para instalar, use o IP (XAddrs) com a aba "Adicionar impressora".</p>'+h2;
+    return;
+  }
+  var h3='';
+  _found.forEach(function(f){
     var key=f.ip;
-    h+='<div class="foundcard">'
+    h3+='<div class="foundcard">'
       +'<input type="checkbox" onchange="toggleSel(\''+esc(key)+'\')" data-ip="'+esc(key)+'">'
       +'<div class="ip">'+esc(f.ip)+'</div>'
       +'<div style="flex:1"><div class="muted">'+esc(f.hostname||'sem hostname')+'</div></div>'
       +'<button class="btn btn-sm btn-primary" onclick="showInstall(\''+esc(key)+'\')">Instalar</button>'
       +'</div>';
   });
-  $('discResult').innerHTML=h;
+  $('discResult').innerHTML=h3;
 }
 function toggleSel(ip){
   if(_selected[ip])delete _selected[ip];else _selected[ip]=true;

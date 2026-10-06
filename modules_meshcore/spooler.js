@@ -376,48 +376,108 @@ var handlers = {
         );
     },
 
-    // Descoberta de impressoras de rede na sub-rede.
-    // v1.1.8: SEM Start-Job — a versão anterior criava 254 processos powershell.exe
-    // simultâneos (1 por job), o que exauriu kernel pool numa máquina com driver
-    // HP/Epson e causou BSOD no cliente. Agora: TCP ConnectAsync porta 9100 (RAW),
-    // 254 sockets async num único processo PS, timeout total ~6s, DNS reverso
-    // com teto de 1,5s apenas nos hosts encontrados.
+    // Descoberta de impressoras SEM varredura de rede (v1.1.9).
+    // Dois modos nativos (mode=wsd|ad|tcp):
+    //  - wsd: WS-Discovery (mesmo protocolo do wizard "Adicionar impressora" do
+    //    Windows) — 1 pacote multicast UDP 3702, respostas em ~2-10s. Zero flood.
+    //  - ad: printQueue publicados no Active Directory via LDAP — impressoras
+    //    compartilhadas por print servers do domínio, sem RSAT (System.DirectoryServices).
+    //  - tcp: fallback — TCP ConnectAsync porta 9100 na sub-rede (1 processo,
+    //    sockets async; histórico BSOD v1.1.8 foi por Start-Job, corrigido).
     discover: function (nodeid, reqid, params, res) {
+        var mode = String(params.mode || 'wsd');
         var range = q(params.range || '');
         var timeout = parseInt(params.timeout || 1000, 10);
         if (isNaN(timeout) || timeout < 500) timeout = 1000;
         if (timeout > 2000) timeout = 2000;
         var waitMs = Math.min(Math.max(timeout * 4, 2000), 8000);
-        var script = PS_HEAD +
-            "$out = @(); " +
-            "$range = '" + range + "'; " +
-            "if (-not $range) { " +
-            "  $ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '169.254*' -and $_.IPAddress -ne '127.0.0.1' } | Select-Object -First 1).IPAddress; " +
-            "  if ($ip) { $range = ($ip.Split('.')[0..2] -join '.') } " +
-            "}; " +
-            "if ($range) { " +
-            "  $conns = @{}; $tasks = @{}; " +
-            "  foreach ($i in 1..254) { " +
-            "    $t = \"$range.$_\"; " +
-            "    $c = New-Object System.Net.Sockets.TcpClient; " +
-            "    $conns[$t] = $c; " +
-            "    $tasks[$t] = $c.ConnectAsync($t, 9100); " +
-            "  }; " +
-            "  [void][System.Threading.Tasks.Task]::WaitAll(@($tasks.Values), " + waitMs + "); " +
-            "  $found = @(); " +
-            "  foreach ($k in @($conns.Keys)) { " +
-            "    if ($tasks[$k] -and $tasks[$k].Status -eq 'RanToCompletion') { $found += $k }; " +
-            "    try { $conns[$k].Close() } catch {} " +
-            "  }; " +
-            "  foreach ($ip2 in $found) { " +
-            "    $name2 = $null; " +
-            "    $rt = [System.Net.Dns]::BeginGetHostEntry($ip2, $null, $null); " +
-            "    if ($rt.AsyncWaitHandle.WaitOne(1500)) { try { $name2 = ([System.Net.Dns]::EndGetHostEntry($rt)).HostName } catch {} } " +
-            "    $out += [pscustomobject]@{ ip=$ip2; hostname=$name2 } " +
-            "  } " +
-            "} " +
-            "$__json = '[]'; if ($out) { $__json = @($out) | ConvertTo-Json -Depth 3 -Compress } " +
-            "Write-Output ('" + SENTINEL + "' + $__json);";
+        var script;
+        if (mode === 'ad') {
+            script = PS_HEAD +
+                "$out = @(); " +
+                "try { " +
+                "  $root = New-Object System.DirectoryServices.DirectoryEntry('GC://RootDSE'); " +
+                "  $nc = $root.defaultNamingContext.Value; " +
+                "  $searcher = New-Object System.DirectoryServices.DirectorySearcher; " +
+                "  $searcher.SearchRoot = New-Object System.DirectoryServices.DirectoryEntry(('GC://' + $nc)); " +
+                "  $searcher.Filter = '(objectClass=printQueue)'; " +
+                "  $searcher.PageSize = 500; " +
+                "  $searcher.PropertiesToLoad.AddRange(@('printerName','serverName','location','driverName','portName','uNCName')) | Out-Null; " +
+                "  $res = $searcher.FindAll(); " +
+                "  foreach ($r in $res) { " +
+                "    $g = $r.Properties; " +
+                "    $out += [pscustomobject]@{ " +
+                "      name=[string]$g['printerName'][0]; host=[string]$g['serverName'][0]; " +
+                "      location=[string]$g['location'][0]; driver=[string]$g['driverName'][0]; " +
+                "      port=[string]$g['portName'][0]; unc=\\\\\\\\$g['uNCName'][0]; source='ad' " +
+                "    } " +
+                "  } " +
+                "} catch { $out += [pscustomobject]@{ error=('AD: ' + $_.Exception.Message) } } " +
+                "$__json = '[]'; if ($out) { $__json = @($out) | ConvertTo-Json -Depth 3 -Compress } " +
+                "Write-Output ('" + SENTINEL + "' + $__json);";
+        } else if (mode === 'tcp') {
+            script = PS_HEAD +
+                "$out = @(); " +
+                "$range = '" + range + "'; " +
+                "if (-not $range) { " +
+                "  $ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '169.254*' -and $_.IPAddress -ne '127.0.0.1' } | Select-Object -First 1).IPAddress; " +
+                "  if ($ip) { $range = ($ip.Split('.')[0..2] -join '.') } " +
+                "}; " +
+                "if ($range) { " +
+                "  $conns = @{}; $tasks = @{}; " +
+                "  foreach ($i in 1..254) { " +
+                "    $t = \"$range.$_\"; " +
+                "    $c = New-Object System.Net.Sockets.TcpClient; " +
+                "    $conns[$t] = $c; " +
+                "    $tasks[$t] = $c.ConnectAsync($t, 9100); " +
+                "  }; " +
+                "  [void][System.Threading.Tasks.Task]::WaitAll(@($tasks.Values), " + waitMs + "); " +
+                "  $found = @(); " +
+                "  foreach ($k in @($conns.Keys)) { " +
+                "    if ($tasks[$k] -and $tasks[$k].Status -eq 'RanToCompletion') { $found += $k }; " +
+                "    try { $conns[$k].Close() } catch {} " +
+                "  }; " +
+                "  foreach ($ip2 in $found) { " +
+                "    $name2 = $null; " +
+                "    $rt = [System.Net.Dns]::BeginGetHostEntry($ip2, $null, $null); " +
+                "    if ($rt.AsyncWaitHandle.WaitOne(1500)) { try { $name2 = ([System.Net.Dns]::EndGetHostEntry($rt)).HostName } catch {} } " +
+                "    $out += [pscustomobject]@{ ip=$ip2; hostname=$name2; source='tcp' } " +
+                "  } " +
+                "} " +
+                "$__json = '[]'; if ($out) { $__json = @($out) | ConvertTo-Json -Depth 3 -Compress } " +
+                "Write-Output ('" + SENTINEL + "' + $__json);";
+        } else {
+            // wsd (padrão): WS-Discovery Probe via UdpClient, sem flood e sem processo extra
+            var wsdTimeout = Math.min(Math.max(timeout * 6, 4000), 12000);
+            script = PS_HEAD +
+                "$out = @(); " +
+                "try { " +
+                "  $probe = '<?xml version=\"1.0\" encoding=\"utf-8\"?><soap:Envelope xmlns:soap=\"http://www.w3.org/2003/05/soap-envelope\" xmlns:wsa=\"http://schemas.xmlsoap.org/ws/2004/08/addressing\" xmlns:wsd=\"http://schemas.xmlsoap.org/ws/2005/04/discovery\"><soap:Header><wsa:Action>http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe</wsa:Action><wsa:MessageID>urn:uuid:00000000-0000-0000-0000-000000000001</wsa:MessageID><wsa:To>urn:schemas-xmlsoap-org:ws:2005:04:discovery</wsa:To></soap:Header><soap:Body><wsd:Probe><wsd:Types>xmlns:prt=\"http://schemas.microsoft.com/windows/2006/08/wsd/print\" prt:PrintDeviceType</wsd:Types></wsd:Probe></soap:Body></soap:Envelope>'; " +
+                "  $msg = [System.Text.Encoding]::UTF8.GetBytes($probe); " +
+                "  $udp = New-Object System.Net.Sockets.UdpClient; " +
+                "  $ep = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0); " +
+                "  $udp.Client.ReceiveTimeout = " + wsdTimeout + "; " +
+                "  $udp.Connect('239.255.255.250', 3702); " +
+                "  [void]$udp.Send($msg, $msg.Length); " +
+                "  $swall = [System.Diagnostics.Stopwatch]::StartNew(); " +
+                "  while ($swall.Elapsed.TotalMilliseconds -lt " + wsdTimeout + ") { " +
+                "    try { " +
+                "      $rb = $udp.Receive([ref]$ep); " +
+                "      if ($rb -and $rb.Length -gt 0) { " +
+                "        $txt = [System.Text.Encoding]::UTF8.GetString($rb); " +
+                "        $xmp = [xml]$txt; " +
+                "        $addr = @(); " +
+                "        try { foreach ($xa in $xmp.Envelope.Body.ProbeMatches.ProbeMatch.XAddrs) { $addr += $xa } } catch {} " +
+                "        $types = ''; try { $types = ($xmp.Envelope.Body.ProbeMatches.ProbeMatch.Types | Out-String) } catch {} " +
+                "        $out += [pscustomobject]@{ ip=($ep.Address.ToString()); xaddrs=($addr -join ','); types=$types; hostname=$null; source='wsd' } " +
+                "      } " +
+                "    } catch { break } " +
+                "  }; " +
+                "  $udp.Close(); " +
+                "} catch { $out += [pscustomobject]@{ error=('WSD: ' + $_.Exception.Message) } } " +
+                "$__json = '[]'; if ($out) { $__json = @($out) | ConvertTo-Json -Depth 3 -Compress } " +
+                "Write-Output ('" + SENTINEL + "' + $__json);";
+        }
         runPS(script, function (err, stdout, stderr) {
             if (err) { res({ ok: false, error: 'PowerShell exit ' + (err.code || '?') + (stderr ? (' stderr=' + String(stderr).substring(0, 300)) : (' ' + err.message)) }); return; }
             var s = String(stdout || '');
@@ -426,7 +486,7 @@ var handlers = {
             var d = json ? parseJSONSafe(json) : [];
             if (d == null) { res({ ok: false, error: 'JSON invalido do discovery' }); return; }
             if (!Array.isArray(d)) d = [d];
-            res({ ok: true, result: d });
+            res({ ok: true, result: d, mode: mode });
         });
     },
 
