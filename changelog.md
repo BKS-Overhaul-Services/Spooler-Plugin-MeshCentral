@@ -1,5 +1,15 @@
 # Changelog — Spooler Plugin MeshCentral
 
+## 1.1.11 (2026-10-06)
+### Added
+- **Enriquecimento de descoberta via IPP/IPPS** (`modules_meshcore/spooler.js:discover`): para cada host com 9100 aberta, cascade de identidade — (1) IPP `Get-Printer-Attributes` plano na 631 `/ipp/print`; (2) IPPS (TLS com validação de cert desativada) quando o device exige upgrade (ex: Epson IPP-Server responde 426); (3) PJL `INFO ID` na 9100; (4) HTTP `<title>` na 80. Parsing IPP real (struct `tag | nameLen | name | valueLen(2 BE) | value`) extraindo `printer-make-and-model`, `printer-name` e `printer-firmware-string-version` pelo comprimento exato — sem heurística de regex. Validado com 2 impressoras físicas: EPSON L5590 Series (via IPPS) e HP LaserJet MFP M426dw (via IPP, + printerName NPI3E0611A + firmware 20201022). Resultado do discover agora inclui `model`, `printerName`, `firmware`, `modelSource` (ipp|ipp-name|pjl|http).
+- **Frontend do discover** (views/device.handlebars): card com **modelo em destaque** + badge da fonte (IPP/PJL/HTTP) + fila + firmware; `bestPrinterName()` com precedência `model > printerName (se não for path de fila: ipp/print etc.) > hostname > IP`; dialog "Instalar" e instalação em lote pré-preenchem o nome com o melhor nome disponível.
+
+### Notes
+- `printer-name` IPP de firmwares simples (Epson) ecoa o path da URI (`ipp/print`) — filtrado pelo regex `^(ipp|ipps|print|ipp\/print)$`. O nome real da Epson existe no mDNS (EPSONE78D7B), não no IPP.
+- Custo do enriquecimento: ~2-3s por host achado (IPP 2,5s connect + resposta; TLS só quando necessário; PJL espera 900ms). Scan completo em bench: 14,6s para 2 impressoras.
+- Descoberta WSD/AD inalterada. TCP continua fallback (mas agora é o único que funciona quando multicast está bloqueado no AP — caso comum).
+
 ## 1.1.10 (2026-10-06)
 ### Fixed
 - **CRÍTICO — TCP scan nunca achava nada desde a v1.1.8** (`modules_meshcore/spooler.js:discover`): dentro de `foreach ($i in 1..254)`, o gerador de IP usava `$_` (variável de pipeline, vazia em `foreach`) em vez de `$i` → todos os 254 "IPs" viravam `192.168.0.` (inválido) → 1 task faulted, 0 resultados. Fix: `$_` → `$i`.

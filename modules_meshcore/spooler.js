@@ -441,11 +441,85 @@ var handlers = {
                 "    if ($tasks[$k] -and $tasks[$k].Status -eq 'RanToCompletion') { $found += $k }; " +
                 "    try { $conns[$k].Close() } catch {} " +
                 "  }; " +
+                // enriquecimento v2 (v1.1.11): IPP -> IPPS -> PJL -> HTTP
+                // IPP Get-Printer-Attributes na 631 (plano e TLS) retorna printer-make-and-model,
+                // printer-name e firmware oficiais. PJL INFO ID e HTTP title como fallback.
+                "  function Find-IppAttrs($ip2, $useTls) { " +
+                "    $result = $null; " +
+                "    try { " +
+                "      $ms2 = New-Object System.IO.MemoryStream; $bw2 = New-Object System.IO.BinaryWriter($ms2); " +
+                "      $bw2.Write([byte[]]@(0x01,0x01)); $bw2.Write([byte[]]@(0x00,0x0B)); $bw2.Write([byte[]]@(0x00,0x00,0x00,0x01)); $bw2.Write([byte]0x01); " +
+                "      function WAttrI($bwx,$tag,$nm,$vl) { $kb=[Text.Encoding]::ASCII.GetBytes($nm); $vb=[Text.Encoding]::ASCII.GetBytes($vl); $bwx.Write([byte]$tag); $bwx.Write([byte[]]@([byte](($kb.Length -shr 8) -band 0xFF),[byte]($kb.Length -band 0xFF))); $bwx.Write($kb); $bwx.Write([byte[]]@([byte](($vb.Length -shr 8) -band 0xFF),[byte]($vb.Length -band 0xFF))); $bwx.Write($vb) } " +
+                "      WAttrI $bw2 0x47 'attributes-charset' 'utf-8'; WAttrI $bw2 0x48 'attributes-natural-language' 'en'; WAttrI $bw2 0x45 'printer-uri' ('ipp://' + $ip2 + ':631/ipp/print'); " +
+                "      $bw2.Write([byte]0x03); $bw2.Flush(); " +
+                "      $payload = $ms2.ToArray(); " +
+                "      $pc = New-Object System.Net.Sockets.TcpClient; " +
+                "      if (-not $pc.ConnectAsync($ip2, 631).Wait(2500)) { try { $pc.Close() } catch {}; return $null } " +
+                "      $st = $pc.GetStream(); $st.ReadTimeout = 4000; $st.WriteTimeout = 2500; " +
+                "      if ($useTls) { $tls = New-Object System.Net.Security.SslStream($st, $false, { $true }); $tls.AuthenticateAsClient($ip2); $st = $tls } " +
+                "      $hdr = 'POST /ipp/print HTTP/1.1' + [char]13 + [char]10 + 'Host: ' + $ip2 + ':631' + [char]13 + [char]10 + 'Content-Type: application/ipp' + [char]13 + [char]10 + ('Content-Length: ' + $payload.Length) + [char]13 + [char]10 + 'Connection: close' + [char]13 + [char]10 + [char]13 + [char]10; " +
+                "      $hb = [Text.Encoding]::ASCII.GetBytes($hdr); $st.Write($hb, 0, $hb.Length); $st.Write($payload, 0, $payload.Length); " +
+                "      $ab = New-Object System.IO.MemoryStream; $rb2 = New-Object byte[] 65536; " +
+                "      try { while ($true) { $rn = $st.Read($rb2, 0, $rb2.Length); if ($rn -le 0) { break }; $ab.Write($rb2, 0, $rn); if ($ab.Length -gt 65536) { break } } } catch {} " +
+                "      try { $st.Close(); $pc.Close() } catch {}; " +
+                // extração IPP real: localiza o nome do atributo nos bytes, lê 0x00 + value-length (2 bytes BE) e corta o valor exato
+                "      function Find-IppValue($b, $key) { " +
+                "        $kb = [Text.Encoding]::ASCII.GetBytes($key); " +
+                "        for ($i = 0; $i -le $b.Length - $kb.Length; $i++) { " +
+                "          $ok2 = $true; " +
+                "          for ($j = 0; $j -lt $kb.Length; $j++) { if ($b[$i + $j] -ne $kb[$j]) { $ok2 = $false; break } } " +
+                "          if ($ok2) { " +
+                "            $p = $i + $kb.Length; " +
+                "            if ($p + 2 -gt $b.Length) { return $null } " +
+                "            $vl2 = (($b[$p] -shl 8) -bor $b[$p + 1]); " +
+                "            $p += 2; " +
+                "            if ($vl2 -le 0 -or $vl2 -gt 200 -or ($p + $vl2) -gt $b.Length) { return $null } " +
+                "            return [Text.Encoding]::ASCII.GetString($b, $p, $vl2).Trim() " +
+                "          } " +
+                "        } " +
+                "        return $null " +
+                "      } " +
+                "      $rbytes = $ab.ToArray(); " +
+                "      $r3 = @{}; " +
+                "      $r3.model = Find-IppValue $rbytes 'printer-make-and-model'; " +
+                "      $r3.pname = Find-IppValue $rbytes 'printer-name'; " +
+                "      $r3.fw = Find-IppValue $rbytes 'printer-firmware-string-version'; " +
+                "      if ($r3.model -or $r3.pname) { $result = $r3 } " +
+                "    } catch {} " +
+                "    return $result " +
+                "  } " +
                 "  foreach ($ip2 in $found) { " +
-                "    $name2 = $null; " +
+                "    $name2 = $null; $pname = $null; $fw = $null; $src = $null; " +
+                "    $rIpp = Find-IppAttrs $ip2 $false; " +
+                "    if (-not $rIpp) { $rIpp = Find-IppAttrs $ip2 $true } " +
+                "    if ($rIpp) { $name2 = $rIpp.model; $pname = $rIpp.pname; $fw = $rIpp.fw; if ($name2) { $src = 'ipp' } elseif ($pname) { $src = 'ipp-name' } } " +
+                "    if (-not $name2) { " +
+                "      try { " +
+                "        $pc = New-Object System.Net.Sockets.TcpClient; " +
+                "        if ($pc.ConnectAsync($ip2, 9100).Wait(2000)) { " +
+                "          $ps2 = $pc.GetStream(); $ps2.ReadTimeout = 2500; $ps2.WriteTimeout = 2000; " +
+                "          $pjl = [System.Text.Encoding]::ASCII.GetBytes([char]27 + '%-12345X@PJL INFO ID' + [char]13 + [char]10 + [char]27 + '%-12345X'); " +
+                "          $ps2.Write($pjl, 0, $pjl.Length); " +
+                "          Start-Sleep -Milliseconds 900; " +
+                "          $pb = New-Object byte[] 1024; $pr = ''; " +
+                "          try { while ($ps2.DataAvailable) { $pn = $ps2.Read($pb, 0, $pb.Length); $pr += [System.Text.Encoding]::ASCII.GetString($pb, 0, $pn); if ($pr.Length -gt 512) { break } } } catch {} " +
+                "          $mm = [regex]::Match($pr, '\"([^\"]{2,80})\"'); " +
+                "          if ($mm.Success) { $name2 = $mm.Groups[1].Value; $src = 'pjl' } " +
+                "        } " +
+                "      } catch {} " +
+                "      try { $pc.Close() } catch {}; " +
+                "    } " +
+                "    if (-not $name2) { " +
+                "      try { " +
+                "        $hr = Invoke-WebRequest -Uri ('http://' + $ip2 + '/') -TimeoutSec 3 -UseBasicParsing; " +
+                "        $tm = [regex]::Match($hr.Content, '<title>\\s*([^<]{2,80}?)\\s*</title>'); " +
+                "        if ($tm.Success) { $name2 = ($tm.Groups[1].Value -replace '&nbsp;', ' ' -replace '\\s+', ' ').Trim(); $src = 'http' } " +
+                "      } catch {} " +
+                "    } " +
                 "    $rt = [System.Net.Dns]::BeginGetHostEntry($ip2, $null, $null); " +
-                "    if ($rt.AsyncWaitHandle.WaitOne(1500)) { try { $name2 = ([System.Net.Dns]::EndGetHostEntry($rt)).HostName } catch {} } " +
-                "    $out += [pscustomobject]@{ ip=$ip2; hostname=$name2; source='tcp' } " +
+                "    $hn = $null; " +
+                "    if ($rt.AsyncWaitHandle.WaitOne(1500)) { try { $hn = ([System.Net.Dns]::EndGetHostEntry($rt)).HostName } catch {} } " +
+                "    $out += [pscustomobject]@{ ip=$ip2; hostname=$hn; model=$name2; printerName=$pname; firmware=$fw; modelSource=$src; source='tcp' } " +
                 "  } " +
                 "} " +
                 "$__json = '[]'; if ($out) { $__json = @($out) | ConvertTo-Json -Depth 3 -Compress } " +

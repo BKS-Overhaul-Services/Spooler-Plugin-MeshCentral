@@ -525,10 +525,18 @@ function renderFound(list,mode){
   var h3='';
   _found.forEach(function(f){
     var key=f.ip;
+    var model=bestPrinterName(f);
+    var srcBadge={ipp:'IPP','ipp-name':'IPP',pjl:'PJL',http:'HTTP'}[f.modelSource]||'';
+    var det=[];
+    if(f.printerName&&!(/^(ipp|ipps|print|ipp\/print)$/i).test(f.printerName))det.push('fila: '+f.printerName);
+    if(f.firmware)det.push('firmware: '+f.firmware);
+    if(f.hostname)det.push(f.hostname);
     h3+='<div class="foundcard">'
       +'<input type="checkbox" onchange="toggleSel(\''+esc(key)+'\')" data-ip="'+esc(key)+'">'
       +'<div class="ip">'+esc(f.ip)+'</div>'
-      +'<div style="flex:1"><div class="muted">'+esc(f.hostname||'sem hostname')+'</div></div>'
+      +'<div style="flex:1"><div><b>'+esc(model)+'</b>'+(srcBadge?(' <span class="badge">'+esc(srcBadge)+'</span>'):'')+'</div>'
+      +(det.length?'<div class="muted">'+esc(det.join(' · '))+'</div>':'')
+      +'</div>'
       +'<button class="btn btn-sm btn-primary" onclick="showInstall(\''+esc(key)+'\')">Instalar</button>'
       +'</div>';
   });
@@ -540,11 +548,19 @@ function toggleSel(ip){
   $('installSelBtn').disabled=(n===0);
   $('installSelBtn').textContent='Instalar selecionadas ('+n+')';
 }
+function bestPrinterName(f){
+  // precedência validada: model > printerName (se não for path de fila) > hostname > IP
+  var useless=/^(ipp|ipps|print|ipp\/print)$/i;
+  if(f.model)return f.model;
+  if(f.printerName&&!useless.test(f.printerName))return f.printerName;
+  if(f.hostname)return f.hostname.split('.')[0];
+  return 'Impressora_'+f.ip.replace(/\./g,'-');
+}
 function showInstall(ip){
   var f=_found.find(function(x){return x.ip===ip;})||{};
   $('instIp').value=ip;
   $('instHost').value=f.hostname||'—';
-  $('instName').value=(f.hostname?f.hostname.split('.')[0]:('Impressora_'+ip.replace(/\./g,'-')));
+  $('instName').value=bestPrinterName(f);
   if(!_drivers.length)send('listDrivers');
   $('dlgInstall').showModal();
 }
@@ -561,10 +577,10 @@ function installSelected(){
   var driver=prompt('Driver para TODAS as selecionadas (ex: HP Universal Printing PCL 6):','');
   if(!driver)return;
   var port=parseInt(prompt('Porta TCP (padrão 9100):','9100'),10)||9100;
-  ips.forEach(function(ip,idx){
+      ips.forEach(function(ip,idx){
     setTimeout(function(){
       var f=_found.find(function(x){return x.ip===ip;})||{};
-      var name=(f.hostname?f.hostname.split('.')[0]:('Impressora_'+ip.replace(/\./g,'-')));
+      var name=bestPrinterName(f);
       setBusy('addFoundPrinter',true);
       send('addFoundPrinter',{ip:ip,name:name,driver:driver,port:port});
     },idx*1500);
