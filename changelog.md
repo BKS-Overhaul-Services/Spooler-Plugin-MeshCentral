@@ -1,5 +1,13 @@
 # Changelog — Spooler Plugin MeshCentral
 
+## 1.0.2 (2026-10-06)
+### Fixed
+- **Inventário não carregava** (`spooler.js`): frontend envia `pluginaction:'inventory'`, mas o switch do server só aceitava `getPrinters` → "unknown pluginaction=inventory". Adicionado case `inventory`.
+
+## 1.0.1 (2026-10-06)
+### Fixed
+- **Crash no boot do MeshCentral** (`spooler.js`): `obj.exports` listava `onWebUIStartupEnd` sem implementação → `TypeError: Cannot read properties of undefined (reading 'toString')` no `prepExports` do pluginHandler (pluginHandler.js:78), com crash loop a cada 5s. Removido do exports.
+
 ## 1.0.0 (2026-10-06)
 - Primeira versão.
 - CRUD de impressoras remotamente via agente MeshCentral (Windows):
