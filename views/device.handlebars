@@ -1,0 +1,686 @@
+<html>
+<head>
+<meta charset="utf-8">
+<title>{{nodeName}} — Impressoras</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:"Trebuchet MS",Arial,Helvetica,sans-serif;background:#d3d9d6;color:#000;padding:12px;font-size:13px;line-height:1.35}
+.header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.header h1{font-size:18px;font-weight:700;color:#003366}
+.header .sub{color:#444;font-size:12px;margin-top:2px}
+.stats{display:flex;gap:6px;flex-wrap:wrap}
+.stat{background:#fff;border:1px solid #aaa;border-radius:3px;padding:8px 12px;min-width:88px}
+.stat .n{font-size:18px;font-weight:700;color:#003366}
+.stat .l{font-size:10px;color:#666;text-transform:uppercase;margin-top:1px}
+.panel{background:#fff;border:1px solid #aaa;border-radius:3px;padding:10px;margin-bottom:10px}
+.panel-title{background:#c0c0c0;color:#000;font-size:12px;font-weight:700;padding:5px 8px;margin:-10px -10px 10px -10px;border-bottom:1px solid #aaa}
+.toolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px}
+.btn{font-family:inherit;font-size:12px;border:1px solid #808080;background:#f0f0f0;color:#000;padding:5px 12px;border-radius:2px;cursor:pointer}
+.btn:hover{background:#e4e4e4}
+.btn-primary{background:#003366;color:#fff;border-color:#002244}
+.btn-primary:hover{background:#004080}
+.btn-danger{background:#c62828;color:#fff;border-color:#8e1b1b}
+.btn-danger:hover{background:#a02222}
+.btn-sm{font-size:11px;padding:3px 8px}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+select,input[type=text],input[type=number],input[type=checkbox]{font-family:inherit;font-size:12px;border:1px solid #808080;background:#fff;color:#000;padding:4px 6px;border-radius:2px}
+.tabs{display:flex;gap:0;margin-bottom:8px;border-bottom:2px solid #003366}
+.tabs button{border:1px solid #808080;border-bottom:none;background:#606060;color:#fff;padding:6px 14px;cursor:pointer;font-family:inherit;font-size:12px;margin-right:2px;border-radius:4px 4px 0 0}
+.tabs button.active{background:#003366;border-color:#003366;font-weight:700}
+.pane{display:none}.pane.active{display:block}
+table.tbl{width:100%;border-collapse:collapse;font-size:12px}
+table.tbl th{background:#aaa;color:#000;font-weight:700;text-align:left;padding:5px 7px;border:1px solid #999}
+table.tbl td{padding:5px 7px;border-bottom:1px solid #ddd;vertical-align:middle}
+table.tbl tr:nth-child(even) td{background:#f4f6f5}
+table.tbl tr:hover td{background:#e8f0f8}
+.badge{display:inline-block;font-size:10px;padding:1px 6px;border-radius:999px;background:#ddd;color:#333;font-weight:700}
+.badge.ok{background:#c8e6c9;color:#1b5e20}
+.badge.warn{background:#fff3cd;color:#7a5c00}
+.badge.err{background:#ffcdd2;color:#8e1b1b}
+.muted{color:#666;font-size:11px}
+.empty,.loading{text-align:center;padding:24px;color:#666}
+.field{display:flex;flex-direction:column;gap:3px;margin-bottom:8px}
+.field label{font-size:11px;font-weight:700;color:#444}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+@media(max-width:900px){.grid2,.grid3{grid-template-columns:1fr}}
+.foundcard{display:flex;gap:10px;align-items:center;background:#f7f8f7;border:1px solid #bbb;border-radius:2px;padding:8px 10px;margin-bottom:6px}
+.foundcard:hover{border-color:#003366;background:#eef3f8}
+.foundcard .ip{font-weight:700;color:#003366;font-size:13px;min-width:130px}
+dialog{border:1px solid #808080;border-radius:4px;padding:0;max-width:640px;width:92%;box-shadow:0 4px 24px rgba(0,0,0,.4)}
+dialog::backdrop{background:rgba(0,0,0,.5)}
+.dlg-head{background:#003366;color:#fff;padding:8px 12px;font-weight:700;font-size:13px;display:flex;justify-content:space-between;align-items:center}
+.dlg-body{padding:12px;max-height:70vh;overflow:auto}
+.dlg-foot{padding:10px 12px;border-top:1px solid #ccc;display:flex;gap:8px;justify-content:flex-end;background:#f4f6f5}
+#webFrame{width:100%;height:480px;border:1px solid #ccc;background:#fff}
+#dbgToggle{cursor:pointer;font-size:11px;color:#003366;user-select:none;margin-top:10px;text-decoration:underline}
+#debug{display:none;background:#fff8e1;border:1px solid #e0c060;color:#333;padding:6px;margin-top:4px;font-size:10px;font-family:Consolas,monospace;max-height:140px;overflow:auto;border-radius:2px;white-space:pre-wrap}
+.toast{position:fixed;bottom:14px;right:14px;background:#003366;color:#fff;padding:10px 16px;border-radius:4px;font-size:12px;box-shadow:0 2px 12px rgba(0,0,0,.4);z-index:99;display:none;max-width:420px}
+.toast.err{background:#c62828}
+</style>
+</head>
+<body>
+<div class="header">
+  <div>
+    <h1>Impressoras — {{nodeName}}</h1>
+    <div class="sub">CRUD · descoberta de rede · filas · spooler · painel web</div>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="n" id="sPrinters">—</div><div class="l">Impressoras</div></div>
+    <div class="stat"><div class="n" id="sJobs">—</div><div class="l">Jobs na fila</div></div>
+    <div class="stat"><div class="n" id="sSpooler">—</div><div class="l">Spooler</div></div>
+  </div>
+</div>
+
+<div class="tabs">
+  <button class="active" id="tPrinters" onclick="switchTab('printers')">Impressoras</button>
+  <button id="tDiscover" onclick="switchTab('discover')">Descoberta</button>
+  <button id="tJobs" onclick="switchTab('jobs')">Filas</button>
+  <button id="tPorts" onclick="switchTab('ports')">Portas & Drivers</button>
+  <button id="tSpooler" onclick="switchTab('spooler')">Serviço Spooler</button>
+  <button id="tAudit" onclick="switchTab('audit')">Auditoria</button>
+</div>
+
+<!-- ===== IMPRESSORAS ===== -->
+<div id="pane-printers" class="pane active">
+  <div class="panel">
+    <div class="panel-title">Impressoras instaladas</div>
+    <div class="toolbar">
+      <button class="btn btn-primary" onclick="refreshInventory()">Atualizar inventário</button>
+      <button class="btn" onclick="showAddDlg()">Adicionar impressora</button>
+      <button class="btn" onclick="showDiscoverDlg()">Procurar na rede</button>
+      <span class="muted" id="invInfo"></span>
+    </div>
+    <div id="printerList"><div class="empty">Clique em "Atualizar inventário".</div></div>
+  </div>
+</div>
+
+<!-- ===== DESCOBERTA ===== -->
+<div id="pane-discover" class="pane">
+  <div class="panel">
+    <div class="panel-title">Procurar impressoras de rede (SNMP)</div>
+    <div class="toolbar">
+      <input type="text" id="discRange" placeholder="192.168.0 (3 octetos, vazio = auto)" style="width:230px">
+      <select id="discTimeout"><option value="1000">Timeout 1s</option><option value="2000">2s</option><option value="500">0.5s</option></select>
+      <button class="btn btn-primary" id="discBtn" onclick="startDiscover()">Procurar</button>
+      <button class="btn btn-primary" id="installSelBtn" onclick="installSelected()" disabled>Instalar selecionadas (0)</button>
+      <span class="muted" id="discInfo"></span>
+    </div>
+    <div id="discResult"><div class="empty">Nenhuma busca executada.</div></div>
+  </div>
+</div>
+
+<!-- ===== FILAS ===== -->
+<div id="pane-jobs" class="pane">
+  <div class="panel">
+    <div class="panel-title">Fila de impressão</div>
+    <div class="toolbar">
+      <select id="jobsPrinter" style="min-width:220px"><option value="">— Todas as impressoras —</option></select>
+      <button class="btn btn-primary" onclick="loadJobs()">Ver jobs</button>
+      <button class="btn btn-danger" onclick="clearQueue()">Limpar fila da impressora</button>
+      <span class="muted" id="jobsInfo"></span>
+    </div>
+    <div id="jobList"><div class="empty">Selecione e clique em "Ver jobs".</div></div>
+  </div>
+</div>
+
+<!-- ===== PORTAS & DRIVERS ===== -->
+<div id="pane-ports" class="pane">
+  <div class="grid2">
+    <div class="panel">
+      <div class="panel-title">Portas de impressora</div>
+      <div class="toolbar"><button class="btn btn-primary" onclick="loadPorts()">Listar portas</button></div>
+      <div id="portList"><div class="empty">—</div></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Drivers instalados</div>
+      <div class="toolbar"><button class="btn btn-primary" onclick="loadDrivers()">Listar drivers</button></div>
+      <div id="driverList"><div class="empty">—</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== SPOOLER ===== -->
+<div id="pane-spooler" class="pane">
+  <div class="panel">
+    <div class="panel-title">Serviço Print Spooler (Windows)</div>
+    <div class="toolbar">
+      <button class="btn" onclick="loadSpoolerStatus()">Ver status</button>
+      <button class="btn" onclick="spoolerAction('start')">Iniciar</button>
+      <button class="btn" onclick="spoolerAction('stop')">Parar</button>
+      <button class="btn btn-primary" onclick="spoolerAction('restart')">Reiniciar</button>
+      <span class="muted" id="spoolerInfo"></span>
+    </div>
+    <div id="spoolerStatus"><div class="empty">—</div></div>
+  </div>
+</div>
+
+<!-- ===== AUDITORIA ===== -->
+<div id="pane-audit" class="pane">
+  <div class="panel">
+    <div class="panel-title">Auditoria de operações</div>
+    <div class="toolbar"><button class="btn btn-primary" onclick="loadAudit()">Atualizar</button></div>
+    <div id="auditList"><div class="empty">—</div></div>
+  </div>
+</div>
+
+<div id="dbgToggle" onclick="var e=document.getElementById('debug');e.style.display=e.style.display==='none'?'block':'none'">Debug</div>
+<div id="debug">aguardando...</div>
+<div class="toast" id="toast"></div>
+
+<!-- DIALOG: adicionar impressora -->
+<dialog id="dlgAdd">
+  <div class="dlg-head"><span>Adicionar impressora</span><button class="btn btn-sm" onclick="closeDlg('dlgAdd')">✕</button></div>
+  <div class="dlg-body">
+    <div class="field"><label>Nome da impressora *</label><input type="text" id="addName" placeholder="Ex: HP-Lab-2oAndar"></div>
+    <div class="field"><label>IP / Host *</label><input type="text" id="addIp" placeholder="Ex: 192.168.0.50"></div>
+    <div class="grid2">
+      <div class="field"><label>Porta</label><input type="number" id="addPort" value="9100"></div>
+      <div class="field"><label>Driver *</label><select id="addDriver"><option value="">— carregando —</option></select></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Compartilhar</label><input type="checkbox" id="addShared"> <span class="muted">compartilhada na rede</span></div>
+      <div class="field"><label>Definir como padrão</label><input type="checkbox" id="addDefault"></div>
+    </div>
+  </div>
+  <div class="dlg-foot">
+    <button class="btn" onclick="closeDlg('dlgAdd')">Cancelar</button>
+    <button class="btn btn-primary" onclick="doAddPrinter()">Adicionar</button>
+  </div>
+</dialog>
+
+<!-- DIALOG: instalar impressora encontrada -->
+<dialog id="dlgInstall">
+  <div class="dlg-head"><span>Instalar impressora encontrada</span><button class="btn btn-sm" onclick="closeDlg('dlgInstall')">✕</button></div>
+  <div class="dlg-body">
+    <div class="field"><label>IP</label><input type="text" id="instIp" readonly></div>
+    <div class="field"><label>Hostname</label><input type="text" id="instHost" readonly></div>
+    <div class="field"><label>Nome da impressora *</label><input type="text" id="instName"></div>
+    <div class="field"><label>Driver *</label><select id="instDriver"><option value="">— carregando —</option></select></div>
+    <div class="field"><label>Porta</label><input type="number" id="instPort" value="9100"></div>
+  </div>
+  <div class="dlg-foot">
+    <button class="btn" onclick="closeDlg('dlgInstall')">Cancelar</button>
+    <button class="btn btn-primary" onclick="doInstallFound()">Instalar</button>
+  </div>
+</dialog>
+
+<!-- DIALOG: configurar impressora -->
+<dialog id="dlgConfig">
+  <div class="dlg-head"><span>Configurar: <span id="cfgName"></span></span><button class="btn btn-sm" onclick="closeDlg('dlgConfig')">✕</button></div>
+  <div class="dlg-body">
+    <div class="grid2">
+      <div class="field"><label>Compartilhada</label><input type="checkbox" id="cfgShared"></div>
+      <div class="field"><label>Nome de compartilhamento</label><input type="text" id="cfgShareName"></div>
+      <div class="field"><label>Prioridade (1-99)</label><input type="number" id="cfgPriority" min="1" max="99"></div>
+      <div class="field"><label>Trabalhar offline</label><input type="checkbox" id="cfgOffline"></div>
+      <div class="field"><label>Driver</label><select id="cfgDriver"><option value="">— manter —</option></select></div>
+      <div class="field"><label>Porta</label><select id="cfgPort"><option value="">— manter —</option></select></div>
+    </div>
+  </div>
+  <div class="dlg-foot">
+    <button class="btn" onclick="closeDlg('dlgConfig')">Cancelar</button>
+    <button class="btn btn-primary" onclick="doSaveConfig()">Salvar</button>
+  </div>
+</dialog>
+
+<!-- DIALOG: renomear -->
+<dialog id="dlgRename">
+  <div class="dlg-head"><span>Renomear impressora</span><button class="btn btn-sm" onclick="closeDlg('dlgRename')">✕</button></div>
+  <div class="dlg-body">
+    <div class="field"><label>Nome atual</label><input type="text" id="renOld" readonly></div>
+    <div class="field"><label>Novo nome *</label><input type="text" id="renNew"></div>
+  </div>
+  <div class="dlg-foot">
+    <button class="btn" onclick="closeDlg('dlgRename')">Cancelar</button>
+    <button class="btn btn-primary" onclick="doRename()">Renomear</button>
+  </div>
+</dialog>
+
+<!-- DIALOG: painel web -->
+<dialog id="dlgWeb" style="max-width:960px">
+  <div class="dlg-head"><span>Painel web — <span id="webIp"></span></span><button class="btn btn-sm" onclick="closeDlg('dlgWeb')">✕</button></div>
+  <div class="dlg-body">
+    <div class="toolbar"><button class="btn btn-primary btn-sm" onclick="loadWebPanel()">Recarregar</button><span class="muted" id="webInfo"></span></div>
+    <iframe id="webFrame" sandbox="allow-same-origin"></iframe>
+  </div>
+</dialog>
+
+<!-- DIALOG: excluir confirmação -->
+<dialog id="dlgDel">
+  <div class="dlg-head" style="background:#c62828"><span>Confirmar exclusão</span><button class="btn btn-sm" onclick="closeDlg('dlgDel')">✕</button></div>
+  <div class="dlg-body">
+    <p>Excluir a impressora <b id="delName"></b>?</p>
+    <p class="muted"><input type="checkbox" id="delPort"> Excluir também a porta TCP/IP (se não estiver em uso)</p>
+  </div>
+  <div class="dlg-foot">
+    <button class="btn" onclick="closeDlg('dlgDel')">Cancelar</button>
+    <button class="btn btn-danger" onclick="doDelete()">Excluir</button>
+  </div>
+</dialog>
+
+<script>
+var nodeid='{{nodeid}}', nodeName='{{nodeName}}';
+var ms=(typeof parent!=='undefined'&&parent.meshserver)||window.meshserver;
+var D=[];
+var _printers=[], _drivers=[], _ports=[], _jobs=[], _found=[], _selected={}, _spooler=null;
+var _ops={}; // op → true enquanto pendente
+
+function dlog(){var a=Array.prototype.slice.call(arguments);D.push(new Date().toLocaleTimeString()+' '+a.join(' '));var e=document.getElementById('debug');if(e)e.innerHTML=D.slice(-80).join('\n');}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function $(id){return document.getElementById(id);}
+function toast(msg,err){var t=$('toast');t.textContent=msg;t.className='toast'+(err?' err':'');t.style.display='block';clearTimeout(t._h);t._h=setTimeout(function(){t.style.display='none';},5000);}
+function closeDlg(id){var d=$(id);if(d.open)d.close();}
+function setBusy(op,b){_ops[op]=b;document.querySelectorAll('button').forEach(function(x){if(x.dataset.op===op)x.disabled=b;});}
+
+/* ===== WS ===== */
+if(ms&&ms.socket){
+  var orig=ms.socket.onmessage;
+  ms.socket.onmessage=function(event){
+    try{
+      var d=JSON.parse(event.data);
+      if(d.action==='plugin'&&d.plugin==='spooler'&&d.method==='agentResult'){
+        dlog('WS result', d.op, 'ok='+(d.ok===true));
+        handleResult(d);
+        return;
+      }
+    }catch(e){}
+    if(typeof orig==='function')orig.call(ms.socket,event);
+  };
+  dlog('socket hooked');
+} else dlog('ms/socket não disponível');
+
+function send(action,params){ if(ms){ ms.send({action:'plugin',plugin:'spooler',pluginaction:action,nodeid:nodeid,params:params||{}}); } else toast('Sem conexão',true); }
+
+function handleResult(d){
+  var op=d.op;
+  setBusy(op,false);
+  if(!d.ok){ toast((op)+': '+(d.error||'erro'),true); if(op==='inventory'){$('invInfo').textContent='erro: '+d.error;} return; }
+  var r=d.result;
+  switch(op){
+    case 'inventory': renderPrinters(r||[]); break;
+    case 'listDrivers': _drivers=r||[]; fillDriverSelects(); renderDrivers(); break;
+    case 'listPorts': _ports=r||[]; fillPortSelects(); renderPorts(); break;
+    case 'addPrinter': toast('Impressora adicionada'); refreshInventory(); loadPorts(); break;
+    case 'addFoundPrinter': toast('Impressora instalada'); closeDlg('dlgInstall'); refreshInventory(); break;
+    case 'deletePrinter': toast('Impressora excluída'); closeDlg('dlgDel'); refreshInventory(); break;
+    case 'renamePrinter': toast('Impressora renomeada'); closeDlg('dlgRename'); refreshInventory(); break;
+    case 'setDefaultPrinter': toast('Padrão definido'); refreshInventory(); break;
+    case 'setPrinterConfig': toast('Configuração salva'); closeDlg('dlgConfig'); refreshInventory(); break;
+    case 'pausePrinter': case 'resumePrinter': toast('Operação aplicada'); refreshInventory(); break;
+    case 'testPage': toast('Página de teste enviada'); break;
+    case 'deletePort': toast('Porta excluída'); loadPorts(); break;
+    case 'discover': renderFound(r||[]); break;
+    case 'getJobs': renderJobs(r||[]); break;
+    case 'jobAction': toast('Job atualizado'); loadJobs(); break;
+    case 'clearQueue': toast('Fila limpa'); loadJobs(); break;
+    case 'spoolerStatus': _spooler=r; renderSpooler(); break;
+    case 'spoolerAction': toast('Spooler: '+(r&&r.status?r.status:'ok')); loadSpoolerStatus(); break;
+    case 'webPanel': renderWebPanel(r); break;
+  }
+}
+
+/* ===== TABS ===== */
+function switchTab(n){
+  ['printers','discover','jobs','ports','spooler','audit'].forEach(function(t){
+    $('t'+t.charAt(0).toUpperCase()+t.slice(1)).classList.toggle('active',t===n);
+    $('pane-'+t).classList.toggle('active',t===n);
+  });
+  if(n==='audit')loadAudit();
+  if(n==='ports'&&!_drivers.length)loadDrivers();
+  if(n==='ports'&&!_ports.length)loadPorts();
+  if(n==='spooler')loadSpoolerStatus();
+}
+
+/* ===== INVENTÁRIO ===== */
+function refreshInventory(){
+  $('printerList').innerHTML='<div class="loading">Carregando inventário do dispositivo...</div>';
+  setBusy('inventory',true);
+  send('inventory');
+}
+function renderPrinters(list){
+  _printers=list;
+  $('sPrinters').textContent=list.length;
+  $('invInfo').textContent=list.length+' impressoras · atualizado '+new Date().toLocaleTimeString();
+  if(!list.length){$('printerList').innerHTML='<div class="empty">Nenhuma impressora instalada.</div>';return;}
+  var h='<table class="tbl"><thead><tr><th>Nome</th><th>Driver</th><th>Porta</th><th>Status</th><th>Flags</th><th style="width:340px">Ações</th></tr></thead><tbody>';
+  list.forEach(function(p){
+    var flags=[];
+    if(p.default)flags.push('<span class="badge ok">PADRÃO</span>');
+    if(p.shared)flags.push('<span class="badge">compartilhada</span>');
+    if(p.workOffline)flags.push('<span class="badge warn">offline</span>');
+    var st=parseInt(p.printerStatus,10);
+    var stTxt=(st===0?'desconhecido':st===3?'ociosa':st===4?'imprimindo':st===5?'aquecendo':st===6?'parada':st===7?'offline':('st '+st));
+    var stCls=(st===3||st===4)?'ok':(st===7?'err':'warn');
+    var ip=(p.portInfo&&p.portInfo.printerHostAddress)?p.portInfo.printerHostAddress:null;
+    h+='<tr>'
+      +'<td><b>'+esc(p.name)+'</b></td>'
+      +'<td class="muted">'+esc(p.driver)+'</td>'
+      +'<td class="muted">'+esc(p.port)+(ip?(' <span class="muted">('+esc(ip)+')</span>'):'')+'</td>'
+      +'<td><span class="badge '+stCls+'">'+esc(stTxt)+'</span></td>'
+      +'<td>'+(flags.join(' ')||'—')+'</td>'
+      +'<td>'
+      +'<button class="btn btn-sm" onclick="doTestPage(\''+esc(p.name)+'\')">Teste</button> '
+      +(p.default?'':'<button class="btn btn-sm" onclick="doSetDefault(\''+esc(p.name)+'\')">Padrão</button> ')
+      +(p.workOffline?'':'<button class="btn btn-sm" onclick="sendCfg(\''+esc(p.name)+'\',{pausePrinter:1})">Pausar</button> ')
+      +'<button class="btn btn-sm" onclick="sendCfg(\''+esc(p.name)+'\',{resumePrinter:1})">Retomar</button> '
+      +'<button class="btn btn-sm" onclick="showConfig(\''+esc(p.name)+'\')">Config</button> '
+      +'<button class="btn btn-sm" onclick="showRename(\''+esc(p.name)+'\')">Renomear</button> '
+      +(ip?'<button class="btn btn-sm" onclick="showWeb(\''+esc(ip)+'\')">Painel web</button> ':'')
+      +'<button class="btn btn-sm btn-danger" onclick="showDel(\''+esc(p.name)+'\')">Excluir</button>'
+      +'</td></tr>';
+  });
+  h+='</tbody></table>';
+  $('printerList').innerHTML=h;
+  var sel=$('jobsPrinter');
+  var cur=sel.value;
+  sel.innerHTML='<option value="">— Todas as impressoras —</option>';
+  list.forEach(function(p){var o=document.createElement('option');o.value=p.name;o.textContent=p.name;sel.appendChild(o);});
+  sel.value=cur;
+}
+function doTestPage(n){send('testPage',{name:n});}
+function doSetDefault(n){send('setDefaultPrinter',{name:n});}
+function sendCfg(n,which){
+  if(which.pausePrinter){setBusy('pausePrinter',true);send('pausePrinter',{name:n});}
+  else if(which.resumePrinter){setBusy('resumePrinter',true);send('resumePrinter',{name:n});}
+}
+
+/* ===== ADD / CONFIG / RENAME / DELETE ===== */
+function fillDriverSelects(){
+  var opts='<option value="">— selecione —</option>'+_drivers.map(function(d){return '<option value="'+esc(d.Name||d.name)+'">'+esc(d.Name||d.name)+'</option>';}).join('');
+  ['addDriver','instDriver','cfgDriver'].forEach(function(id){var s=$(id);var c=s.value;s.innerHTML=opts;});
+}
+function fillPortSelects(){
+  var s=$('cfgPort');var c=s.value;
+  s.innerHTML='<option value="">— manter —</option>'+_ports.map(function(p){return '<option value="'+esc(p.Name||p.name)+'">'+esc(p.Name||p.name)+'</option>';}).join('');
+  s.value=c;
+}
+function showAddDlg(){
+  if(!_drivers.length){send('listDrivers');}
+  $('dlgAdd').showModal();
+}
+function doAddPrinter(){
+  var name=$('addName').value.trim(),ip=$('addIp').value.trim(),driver=$('addDriver').value,port=parseInt($('addPort').value,10)||9100;
+  if(!name||!ip||!driver){toast('Preencha nome, IP e driver',true);return;}
+  setBusy('addPrinter',true);
+  send('addPrinter',{name:name,ip:ip,driver:driver,port:port,shared:$('addShared').checked,setDefault:$('addDefault').checked});
+  closeDlg('dlgAdd');
+}
+function showConfig(name){
+  var p=_printers.find(function(x){return x.name===name;});
+  if(!p)return;
+  $('cfgName').textContent=name;
+  $('cfgShared').checked=!!p.shared;
+  $('cfgShareName').value=p.shareName||'';
+  $('cfgPriority').value=p.priority||1;
+  $('cfgOffline').checked=!!p.workOffline;
+  if(!_drivers.length)send('listDrivers');
+  if(!_ports.length)send('listPorts');
+  $('dlgConfig').showModal();
+}
+function doSaveConfig(){
+  var name=$('cfgName').textContent;
+  var params={name:name};
+  var p=_printers.find(function(x){return x.name===name;})||{};
+  params.shared=$('cfgShared').checked;
+  if($('cfgShareName').value.trim())params.shareName=$('cfgShareName').value.trim();
+  var pr=parseInt($('cfgPriority').value,10);
+  if(!isNaN(pr)&&pr>=1&&pr<=99)params.priority=pr;
+  params.workOffline=$('cfgOffline').checked;
+  if($('cfgDriver').value)params.driver=$('cfgDriver').value;
+  if($('cfgPort').value)params.portName=$('cfgPort').value;
+  setBusy('setPrinterConfig',true);
+  send('setPrinterConfig',params);
+}
+function showRename(name){
+  $('renOld').value=name;$('renNew').value=name;
+  $('dlgRename').showModal();
+}
+function doRename(){
+  var o=$('renOld').value,n=$('renNew').value.trim();
+  if(!n||n===o){toast('Informe um novo nome',true);return;}
+  setBusy('renamePrinter',true);
+  send('renamePrinter',{oldName:o,newName:n});
+}
+function showDel(name){
+  $('delName').textContent=name;
+  var p=_printers.find(function(x){return x.name===name;});
+  $('delPort').checked=false;
+  $('delPort').disabled=!(p&&p.port&&p.port.indexOf('IP_')===0);
+  $('dlgDel').showModal();
+}
+function doDelete(){
+  var name=$('delName').textContent;
+  var p=_printers.find(function(x){return x.name===name;});
+  setBusy('deletePrinter',true);
+  send('deletePrinter',{name:name,removePort:$('delPort').checked,portName:p?p.port:null});
+}
+
+/* ===== DESCOBERTA ===== */
+function showDiscoverDlg(){switchTab('discover');}
+function startDiscover(){
+  $('discResult').innerHTML='<div class="loading">Procurando impressoras na rede (pode levar até 10s)...</div>';
+  $('discInfo').textContent='';
+  $('installSelBtn').disabled=true;
+  _selected={};
+  setBusy('discover',true);
+  send('discover',{range:$('discRange').value.trim(),timeout:parseInt($('discTimeout').value,10)});
+}
+function renderFound(list){
+  _found=list;
+  if(!list.length){$('discResult').innerHTML='<div class="empty">Nenhuma impressora encontrada na rede. Verifique o range/timeout.</div>';return;}
+  $('discInfo').textContent=list.length+' impressora(s) encontrada(s)';
+  var h='';
+  list.forEach(function(f){
+    var key=f.ip;
+    h+='<div class="foundcard">'
+      +'<input type="checkbox" onchange="toggleSel(\''+esc(key)+'\')" data-ip="'+esc(key)+'">'
+      +'<div class="ip">'+esc(f.ip)+'</div>'
+      +'<div style="flex:1"><div class="muted">'+esc(f.hostname||'sem hostname')+'</div></div>'
+      +'<button class="btn btn-sm btn-primary" onclick="showInstall(\''+esc(key)+'\')">Instalar</button>'
+      +'</div>';
+  });
+  $('discResult').innerHTML=h;
+}
+function toggleSel(ip){
+  if(_selected[ip])delete _selected[ip];else _selected[ip]=true;
+  var n=Object.keys(_selected).length;
+  $('installSelBtn').disabled=(n===0);
+  $('installSelBtn').textContent='Instalar selecionadas ('+n+')';
+}
+function showInstall(ip){
+  var f=_found.find(function(x){return x.ip===ip;})||{};
+  $('instIp').value=ip;
+  $('instHost').value=f.hostname||'—';
+  $('instName').value=(f.hostname?f.hostname.split('.')[0]:('Impressora_'+ip.replace(/\./g,'-')));
+  if(!_drivers.length)send('listDrivers');
+  $('dlgInstall').showModal();
+}
+function doInstallFound(){
+  var ip=$('instIp').value,name=$('instName').value.trim(),driver=$('instDriver').value,port=parseInt($('instPort').value,10)||9100;
+  if(!name||!driver){toast('Preencha nome e driver',true);return;}
+  setBusy('addFoundPrinter',true);
+  send('addFoundPrinter',{ip:ip,name:name,driver:driver,port:port});
+}
+function installSelected(){
+  var ips=Object.keys(_selected);
+  if(!ips.length)return;
+  if(!_drivers.length){toast('Carregue os drivers primeiro (aba Portas & Drivers)',true);return;}
+  var driver=prompt('Driver para TODAS as selecionadas (ex: HP Universal Printing PCL 6):','');
+  if(!driver)return;
+  var port=parseInt(prompt('Porta TCP (padrão 9100):','9100'),10)||9100;
+  ips.forEach(function(ip,idx){
+    setTimeout(function(){
+      var f=_found.find(function(x){return x.ip===ip;})||{};
+      var name=(f.hostname?f.hostname.split('.')[0]:('Impressora_'+ip.replace(/\./g,'-')));
+      setBusy('addFoundPrinter',true);
+      send('addFoundPrinter',{ip:ip,name:name,driver:driver,port:port});
+    },idx*1500);
+  });
+}
+
+/* ===== FILAS ===== */
+function loadJobs(){
+  var p=$('jobsPrinter').value;
+  $('jobList').innerHTML='<div class="loading">Carregando jobs...</div>';
+  setBusy('getJobs',true);
+  send('getJobs',p?{name:p}:{});
+}
+function renderJobs(list){
+  _jobs=list;
+  $('sJobs').textContent=list.length;
+  $('jobsInfo').textContent=list.length+' job(s)';
+  if(!list.length){$('jobList').innerHTML='<div class="empty">Nenhum job na fila.</div>';return;}
+  var h='<table class="tbl"><thead><tr><th>ID</th><th>Impressora</th><th>Documento</th><th>Usuário</th><th>Status</th><th>Páginas</th><th>Enviado</th><th style="width:230px">Ações</th></tr></thead><tbody>';
+  list.forEach(function(j){
+    var st=String(j.JobStatus||j.jobStatus||'');
+    h+='<tr><td>'+esc(j.Id||j.id)+'</td><td>'+esc(j.PrinterName||j.printerName)+'</td>'
+      +'<td>'+esc(j.DocumentName||j.documentName||'—')+'</td>'
+      +'<td>'+esc(j.UserName||j.userName||'—')+'</td>'
+      +'<td><span class="badge">'+esc(st||'?')+'</span></td>'
+      +'<td>'+esc((j.PagesPrinted||j.pagesPrinted||0)+'/'+(j.TotalPages||j.totalPages||'?'))+'</td>'
+      +'<td class="muted">'+(j.SubmittedTime?new Date(j.SubmittedTime||j.submittedTime).toLocaleString():'—')+'</td>'
+      +'<td>'
+      +'<button class="btn btn-sm" onclick="jobAct('+esc(j.Id||j.id)+',\''+esc(j.PrinterName||j.printerName)+'\',\'pause\')">Pausar</button> '
+      +'<button class="btn btn-sm" onclick="jobAct('+esc(j.Id||j.id)+',\''+esc(j.PrinterName||j.printerName)+'\',\'resume\')">Retomar</button> '
+      +'<button class="btn btn-sm" onclick="jobAct('+esc(j.Id||j.id)+',\''+esc(j.PrinterName||j.printerName)+'\',\'restart\')">Reiniciar</button> '
+      +'<button class="btn btn-sm btn-danger" onclick="jobAct('+esc(j.Id||j.id)+',\''+esc(j.PrinterName||j.printerName)+'\',\'cancel\')">Cancelar</button>'
+      +'</td></tr>';
+  });
+  h+='</tbody></table>';
+  $('jobList').innerHTML=h;
+}
+function jobAct(id,printer,action){
+  setBusy('jobAction',true);
+  send('jobAction',{jobId:id,printer:printer,action:action});
+}
+function clearQueue(){
+  var p=$('jobsPrinter').value;
+  if(!p){toast('Selecione uma impressora primeiro',true);return;}
+  if(!confirm('Limpar TODOS os jobs de '+p+'?'))return;
+  setBusy('clearQueue',true);
+  send('clearQueue',{name:p});
+}
+
+/* ===== PORTAS & DRIVERS ===== */
+function loadPorts(){
+  $('portList').innerHTML='<div class="loading">...</div>';
+  setBusy('listPorts',true);
+  send('listPorts');
+}
+function renderPorts(){
+  if(!_ports.length){$('portList').innerHTML='<div class="empty">Nenhuma porta.</div>';return;}
+  var h='<table class="tbl"><thead><tr><th>Nome</th><th>Endereço</th><th>Porta</th><th>Protocolo</th><th></th></tr></thead><tbody>';
+  _ports.forEach(function(p){
+    h+='<tr><td><b>'+esc(p.Name||p.name)+'</b></td><td>'+esc(p.PrinterHostAddress||p.printerHostAddress||'—')+'</td>'
+      +'<td>'+esc(p.PortNumber||p.portNumber||'—')+'</td>'
+      +'<td>'+(parseInt(p.Protocol||p.protocol,10)===2?'RAW':'LPR')+'</td>'
+      +'<td><button class="btn btn-sm btn-danger" onclick="delPort(\''+esc(p.Name||p.name)+'\')">Excluir</button></td></tr>';
+  });
+  h+='</tbody></table>';
+  $('portList').innerHTML=h;
+}
+function delPort(name){
+  if(!confirm('Excluir a porta '+name+'?'))return;
+  setBusy('deletePort',true);
+  send('deletePort',{name:name});
+}
+function loadDrivers(){
+  $('driverList').innerHTML='<div class="loading">...</div>';
+  setBusy('listDrivers',true);
+  send('listDrivers');
+}
+function renderDrivers(){
+  if(!_drivers.length){$('driverList').innerHTML='<div class="empty">Nenhum driver.</div>';return;}
+  var h='<table class="tbl"><thead><tr><th>Nome</th><th>Fabricante</th><th>Arquitetura</th></tr></thead><tbody>';
+  _drivers.forEach(function(d){
+    h+='<tr><td>'+esc(d.Name||d.name)+'</td><td class="muted">'+esc(d.Manufacturer||d.manufacturer||'—')+'</td><td class="muted">'+esc(d.Architecture||d.architecture||'—')+'</td></tr>';
+  });
+  h+='</tbody></table>';
+  $('driverList').innerHTML=h;
+}
+
+/* ===== SPOOLER ===== */
+function loadSpoolerStatus(){
+  setBusy('spoolerStatus',true);
+  send('spoolerStatus');
+}
+function renderSpooler(){
+  var s=_spooler;
+  if(!s){$('spoolerStatus').innerHTML='<div class="empty">—</div>';return;}
+  var ok=String(s.status).toLowerCase()==='running';
+  $('sSpooler').textContent=ok?'OK':'Parado';
+  $('sSpooler').style.color=ok?'#2e7d32':'#c62828';
+  $('spoolerStatus').innerHTML='<p>Status: <span class="badge '+(ok?'ok':'err')+'">'+esc(s.status)+'</span> · Inicialização: '+esc(s.startType||'—')+'</p>';
+}
+function spoolerAction(action){
+  if(action==='stop'&&!confirm('Parar o serviço de spooler? Os jobs ficarão retidos.'))return;
+  setBusy('spoolerAction',true);
+  send('spoolerAction',{action:action});
+}
+
+/* ===== PAINEL WEB ===== */
+function showWeb(ip){
+  $('webIp').textContent=ip;
+  $('webFrame').srcdoc='<p style="padding:20px;font-family:sans-serif">Carregando painel de '+esc(ip)+'...</p>';
+  $('dlgWeb').showModal();
+  loadWebPanel();
+}
+function loadWebPanel(){
+  var ip=$('webIp').textContent;
+  if(!ip)return;
+  $('webInfo').textContent='carregando '+ip+'...';
+  setBusy('webPanel',true);
+  send('webPanel',{ip:ip});
+}
+function renderWebPanel(r){
+  if(!r||r.status!==200){$('webInfo').textContent='falha: '+(r?('HTTP '+r.status):'sem resposta');return;}
+  $('webInfo').textContent='HTTP '+r.status+' · '+String(r.contentType||'').split(';')[0];
+  // extrai <body> e injeta de forma isolada (sem scripts da impressora)
+  var body=r.body||'';
+  var m=body.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+  var inner=m?m[1]:body;
+  inner=inner.replace(/<script[\s\S]*?<\/script>/gi,'').replace(/\son\w+="[^"]*"/gi,'');
+  $('webFrame').srcdoc='<base href="http://'+esc($('webIp').textContent())+'/">'+inner;
+}
+
+/* ===== AUDITORIA ===== */
+function loadAudit(){
+  $('auditList').innerHTML='<div class="loading">...</div>';
+  if(ms)ms.send({action:'plugin',plugin:'spooler',pluginaction:'getAudit',nodeid:nodeid});
+}
+function renderAudit(docs){
+  if(!docs||!docs.length){$('auditList').innerHTML='<div class="empty">Sem registros.</div>';return;}
+  var h='<table class="tbl"><thead><tr><th>Data</th><th>Usuário</th><th>Operação</th><th>Alvo</th><th>Detalhe</th></tr></thead><tbody>';
+  docs.forEach(function(a){
+    h+='<tr><td class="muted">'+(a.time?new Date(a.time).toLocaleString():'—')+'</td>'
+      +'<td>'+esc(a.user)+'</td>'
+      +'<td><span class="badge '+(a.ok?'ok':'err')+'">'+esc(a.op)+'</span></td>'
+      +'<td>'+esc(a.target||'—')+'</td>'
+      +'<td class="muted">'+esc(a.detail||a.error||'—')+'</td></tr>';
+  });
+  h+='</tbody></table>';
+  $('auditList').innerHTML=h;
+}
+
+/* auditoria chega por método diferente */
+if(ms&&ms.socket){
+  var origAudit=orig; // reuso do hook já instalado: adiciona método 'audit'
+  var prevHook=ms.socket.onmessage;
+  ms.socket.onmessage=function(event){
+    try{
+      var d=JSON.parse(event.data);
+      if(d.action==='plugin'&&d.plugin==='spooler'&&d.method==='audit'){renderAudit(d.data||[]);return;}
+    }catch(e){}
+    if(typeof prevHook==='function')prevHook.call(ms.socket,event);
+  };
+}
+
+document.addEventListener('DOMContentLoaded',function(){
+  dlog('init');
+  refreshInventory();
+  loadSpoolerStatus();
+});
+</script>
+</body>
+</html>

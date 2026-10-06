@@ -1,0 +1,18 @@
+{
+  "name": "Spooler — Gerenciador de Impressoras",
+  "shortName": "spooler",
+  "version": "1.0.0",
+  "author": "Misael Filho",
+  "description": "Gerenciamento centralizado de impressoras Windows via MeshCentral: CRUD de impressoras, portas e drivers, descoberta de impressoras de rede (SNMP), instalação automática em lote, filas de impressão, controle do serviço de spooler, página de teste e acesso ao painel web da impressora.",
+  "hasAdminPanel": true,
+  "homepage": "https://github.com/BKS-Overhaul-Services/Spooler-Plugin-MeshCentral",
+  "changelogUrl": "https://raw.githubusercontent.com/BKS-Overhaul-Services/Spooler-Plugin-MeshCentral/main/changelog.md",
+  "configUrl": "https://raw.githubusercontent.com/BKS-Overhaul-Services/Spooler-Plugin-MeshCentral/main/config.json",
+  "downloadUrl": "https://github.com/BKS-Overhaul-Services/Spooler-Plugin-MeshCentral/archive/refs/heads/main.zip",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BKS-Overhaul-Services/Spooler-Plugin-MeshCentral.git"
+  },
+  "versionHistoryUrl": "https://api.github.com/repos/BKS-Overhaul-Services/Spooler-Plugin-MeshCentral/tags",
+  "meshCentralCompat": ">=1.0.0"
+}

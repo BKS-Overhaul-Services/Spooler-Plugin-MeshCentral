@@ -1,0 +1,177 @@
+<html>
+<head>
+<meta charset="utf-8">
+<title>Spooler — Painel Global</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:"Trebuchet MS",Arial,Helvetica,sans-serif;background:#d3d9d6;color:#000;padding:12px;font-size:13px;line-height:1.35}
+.header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.header h1{font-size:18px;font-weight:700;color:#003366}
+.header .sub{color:#444;font-size:12px;margin-top:2px}
+.stats{display:flex;gap:6px;flex-wrap:wrap}
+.stat{background:#fff;border:1px solid #aaa;border-radius:3px;padding:8px 12px;min-width:88px}
+.stat .n{font-size:18px;font-weight:700;color:#003366}
+.stat .l{font-size:10px;color:#666;text-transform:uppercase;margin-top:1px}
+.panel{background:#fff;border:1px solid #aaa;border-radius:3px;padding:10px;margin-bottom:10px}
+.panel-title{background:#c0c0c0;color:#000;font-size:12px;font-weight:700;padding:5px 8px;margin:-10px -10px 10px -10px;border-bottom:1px solid #aaa}
+.toolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px}
+.toolbar label{font-size:11px;color:#444;font-weight:700}
+select,input[type=text]{font-family:inherit;font-size:12px;border:1px solid #808080;background:#fff;color:#000;padding:4px 6px;border-radius:2px}
+.btn{font-family:inherit;font-size:12px;border:1px solid #808080;background:#f0f0f0;color:#000;padding:5px 12px;border-radius:2px;cursor:pointer}
+.btn:hover{background:#e4e4e4}
+.btn-primary{background:#003366;color:#fff;border-color:#002244}
+.btn-primary:hover{background:#004080}
+.btn-sm{font-size:11px;padding:3px 8px}
+table.tbl{width:100%;border-collapse:collapse;font-size:12px}
+table.tbl th{background:#aaa;color:#000;font-weight:700;text-align:left;padding:5px 7px;border:1px solid #999}
+table.tbl td{padding:5px 7px;border-bottom:1px solid #ddd}
+table.tbl tr:nth-child(even) td{background:#f4f6f5}
+table.tbl tr:hover td{background:#e8f0f8}
+.badge{display:inline-block;font-size:10px;padding:1px 6px;border-radius:999px;background:#ddd;color:#333;font-weight:700}
+.badge.ok{background:#c8e6c9;color:#1b5e20}
+.badge.err{background:#ffcdd2;color:#8e1b1b}
+.muted{color:#666;font-size:11px}
+.empty,.loading{text-align:center;padding:24px;color:#666}
+.open-link{color:#003366;font-weight:700;cursor:pointer;text-decoration:underline}
+#dbgToggle{cursor:pointer;font-size:11px;color:#003366;user-select:none;margin-top:10px;text-decoration:underline}
+#debug{display:none;background:#fff8e1;border:1px solid #e0c060;color:#333;padding:6px;margin-top:4px;font-size:10px;font-family:Consolas,monospace;max-height:140px;overflow:auto;border-radius:2px;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<div class="header">
+  <div>
+    <h1>Spooler — Painel Global de Impressoras</h1>
+    <div class="sub">Visão consolidada de todos os dispositivos com impressoras gerenciadas</div>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="n" id="sDevices">—</div><div class="l">Dispositivos</div></div>
+    <div class="stat"><div class="n" id="sPrinters">—</div><div class="l">Impressoras</div></div>
+    <div class="stat"><div class="n" id="sShared">—</div><div class="l">Compartilhadas</div></div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-title">Catálogo de impressoras (cache local)</div>
+  <div class="toolbar">
+    <select id="devFilter" style="min-width:240px" onchange="renderCatalog()">
+      <option value="">— Todos os dispositivos —</option>
+    </select>
+    <input type="text" id="txtFilter" placeholder="Filtrar por nome/driver/IP..." style="min-width:220px" oninput="renderCatalog()">
+    <button class="btn btn-primary" onclick="loadCatalog()">Atualizar catálogo</button>
+    <span class="muted" id="catInfo"></span>
+  </div>
+  <div id="catalog"><div class="empty">Clique em "Atualizar catálogo".</div></div>
+  <p class="muted" style="margin-top:8px">O catálogo reflete o último inventário coletado. Para um dispositivo específico, abra a aba <b>Impressoras</b> no dispositivo — lá ficam as ações completas (CRUD, descoberta, filas, spooler).</p>
+</div>
+
+<div class="panel">
+  <div class="panel-title">Auditoria global (últimas operações)</div>
+  <div class="toolbar"><button class="btn btn-primary" onclick="loadAudit()">Atualizar</button></div>
+  <div id="auditAll"><div class="empty">—</div></div>
+</div>
+
+<div id="dbgToggle" onclick="var e=document.getElementById('debug');e.style.display=e.style.display==='none'?'block':'none'">Debug</div>
+<div id="debug">aguardando...</div>
+
+<script>
+var ms=(typeof parent!=='undefined'&&parent.meshserver)||window.meshserver;
+var D=[], _catalog=[];
+function dlog(){var a=Array.prototype.slice.call(arguments);D.push(new Date().toLocaleTimeString()+' '+a.join(' '));var e=document.getElementById('debug');if(e)e.innerHTML=D.slice(-80).join('\n');}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function $(id){return document.getElementById(id);}
+
+function openDevice(nid){
+  // abre o dispositivo no MeshCentral (navegação do frame pai)
+  try{
+    if(typeof parent!== 'undefined' && parent.goDevice){ parent.goDevice(nid); return; }
+  }catch(e){}
+  try{
+    if(typeof parent!=='undefined'&&parent.postMessage){parent.postMessage({cmd:'openDevice',nodeid:nid},'*');}
+  }catch(e){}
+  dlog('openDevice '+nid);
+}
+
+if(ms&&ms.socket){
+  var orig=ms.socket.onmessage;
+  ms.socket.onmessage=function(event){
+    try{
+      var d=JSON.parse(event.data);
+      if(d.action==='plugin'&&d.plugin==='spooler'){
+        if(d.method==='allCatalog')renderCatalog(d.data||[]);
+        else if(d.method==='audit')renderAudit(d.data||[]);
+        return;
+      }
+    }catch(e){}
+    if(typeof orig==='function')orig.call(ms.socket,event);
+  };
+  dlog('socket hooked');
+}
+
+function loadCatalog(){ if(ms)ms.send({action:'plugin',plugin:'spooler',pluginaction:'getAllCatalog'}); }
+function loadAudit(){ if(ms)ms.send({action:'plugin',plugin:'spooler',pluginaction:'getAudit'}); }
+
+function renderCatalog(list){
+  if(list){_catalog=list;}
+  $('sPrinters').textContent=_catalog.length;
+  var devs={};_catalog.forEach(function(p){devs[p.nodeid]=p.nodeName;});
+  var dn=Object.keys(devs);
+  $('sDevices').textContent=dn.length;
+  $('sShared').textContent=_catalog.filter(function(p){return p.shared;}).length;
+  // dropdown de dispositivos
+  var sel=$('devFilter');var cur=sel.value;
+  sel.innerHTML='<option value="">— Todos os dispositivos —</option>';
+  dn.sort(function(a,b){return String(devs[a]).localeCompare(String(devs[b]));}).forEach(function(nid){
+    var o=document.createElement('option');o.value=nid;o.textContent=devs[nid];sel.appendChild(o);
+  });
+  sel.value=cur;
+  // filtro
+  var f=sel.value;
+  var txt=($('txtFilter').value||'').toLowerCase();
+  var rows=_catalog.filter(function(p){
+    if(f&&p.nodeid!==f)return false;
+    if(txt){
+      var hay=String(p.name+' '+p.driver+' '+p.port+' '+(p.portInfo&&p.portInfo.printerHostAddress||'')).toLowerCase();
+      if(hay.indexOf(txt)===-1)return false;
+    }
+    return true;
+  });
+  $('catInfo').textContent=rows.length+' impressora(s)';
+  if(!rows.length){$('catalog').innerHTML='<div class="empty">Nenhuma impressora no catálogo. Abra um dispositivo Windows e clique em "Atualizar inventário" para popular.</div>';return;}
+  var h='<table class="tbl"><thead><tr><th>Dispositivo</th><th>Impressora</th><th>Driver</th><th>Porta / IP</th><th>Flags</th><th>Atualizado</th></tr></thead><tbody>';
+  rows.forEach(function(p){
+    var flags=[];
+    if(p.default)flags.push('<span class="badge ok">PADRÃO</span>');
+    if(p.shared)flags.push('<span class="badge">compartilhada</span>');
+    if(p.workOffline)flags.push('<span class="badge err">offline</span>');
+    var ip=(p.portInfo&&p.portInfo.printerHostAddress)?p.portInfo.printerHostAddress:'';
+    h+='<tr>'
+      +'<td><span class="open-link" onclick="openDevice(\''+esc(p.nodeid)+'\')" title="Abrir dispositivo">'+esc(p.nodeName||p.nodeid)+'</span></td>'
+      +'<td><b>'+esc(p.name)+'</b></td>'
+      +'<td class="muted">'+esc(p.driver)+'</td>'
+      +'<td class="muted">'+esc(p.port)+(ip?' ('+esc(ip)+')':'')+'</td>'
+      +'<td>'+(flags.join(' ')||'—')+'</td>'
+      +'<td class="muted">'+(p.updatedAt?new Date(p.updatedAt).toLocaleString():'—')+'</td></tr>';
+  });
+  h+='</tbody></table>';
+  $('catalog').innerHTML=h;
+}
+
+function renderAudit(docs){
+  if(!docs||!docs.length){$('auditAll').innerHTML='<div class="empty">Sem registros.</div>';return;}
+  var h='<table class="tbl"><thead><tr><th>Data</th><th>Dispositivo</th><th>Usuário</th><th>Operação</th><th>Alvo</th><th>Resultado</th></tr></thead><tbody>';
+  docs.forEach(function(a){
+    h+='<tr><td class="muted">'+(a.time?new Date(a.time).toLocaleString():'—')+'</td>'
+      +'<td>'+esc(a.nodeName||a.nodeid||'—')+'</td>'
+      +'<td>'+esc(a.user)+'</td>'
+      +'<td>'+esc(a.op)+'</td>'
+      +'<td>'+esc(a.target||'—')+'</td>'
+      +'<td><span class="badge '+(a.ok?'ok':'err')+'">'+(a.ok?'OK':esc(a.detail||a.error||'erro'))+'</span></td></tr>';
+  });
+  h+='</tbody></table>';
+  $('auditAll').innerHTML=h;
+}
+
+document.addEventListener('DOMContentLoaded',function(){dlog('init');loadCatalog();loadAudit();});
+</script>
+</body>
+</html>
