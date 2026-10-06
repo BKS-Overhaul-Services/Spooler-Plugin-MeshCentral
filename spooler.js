@@ -11,7 +11,7 @@
 "use strict";
 
 // Configurável: gate de logs de diagnóstico (error sempre ativo)
-var SP_DEBUG = false;
+var SP_DEBUG = true;
 
 // Categorias de log (padrão Tracer UT_LOG)
 var SP_LOG = {
