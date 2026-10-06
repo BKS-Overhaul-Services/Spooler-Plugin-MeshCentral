@@ -74,6 +74,9 @@ function runJson(body, cb) {
         "$__json = '[]'; if ($out) { $__json = @($out) | ConvertTo-Json -Depth 5 -Compress } " +
         "Write-Output ('" + SENTINEL + "' + $__json);";
     runPS(script, function (err, stdout, stderr) {
+        splog('runJson stdout.len=' + (stdout ? String(stdout).length : 0) +
+            ' stderr=' + (stderr ? String(stderr).substring(0, 200) : 'null') +
+            ' err=' + (err ? String(err.code || err.message) : 'null'));
         if (err) {
             var em = 'PowerShell exit ' + (err.code || '?') + (stderr ? (' stderr=' + String(stderr).substring(0, 300)) : (' ' + err.message));
             splog('runJson PS error: ' + em);
@@ -82,11 +85,27 @@ function runJson(body, cb) {
         }
         var s = String(stdout || '');
         var i = s.indexOf(SENTINEL);
-        var json = (i >= 0) ? s.substring(i + SENTINEL.length).trim() : s.trim();
-        if (!json) {
-            // stdout vazio sem sentinela: provável ruído em stderr
-            var e2 = stderr ? ('stderr=' + String(stderr).substring(0, 300)) : 'stdout vazio';
-            splog('runJson empty: ' + e2);
+        if (i < 0) {
+            // Sentinela ausente: script não chegou ao Write-Output final (parse error,
+            // CLM bloqueou, encoding...). Antes mascarava como ok:true []; agora falha explícita.
+            var e2 = 'sentinela ausente' + (s ? (' stdout=' + s.substring(0, 300)) : ' (stdout vazio)') +
+                (stderr ? (' stderr=' + String(stderr).substring(0, 300)) : '');
+            splog('runJson no-sentinel: ' + e2);
+            sperr('runJson no-sentinel: ' + e2);
+            cb({ ok: false, error: 'PS sem resposta: ' + e2.substring(0, 250) });
+            return;
+        }
+        var json = s.substring(i + SENTINEL.length).trim();
+        if (!json || json === '[]' || json === '[{}]') {
+            // Resultado vazio + stderr com conteúdo = script provavelmente quebrou no meio
+            // (parse error não mata o processo: PS pula pro Write-Output final com $out vazio)
+            if (json !== '[]' || (stderr && String(stderr).trim())) {
+                var e4 = 'resultado vazio do script' + (stderr ? (' stderr=' + String(stderr).substring(0, 300)) : '');
+                splog('runJson empty+stderr: ' + e4);
+                cb({ ok: false, error: e4 });
+                return;
+            }
+            splog('runJson empty (limpo)');
             cb({ ok: true, result: [] });
             return;
         }
@@ -104,12 +123,22 @@ function runJson(body, cb) {
 // Handler de comandos com resposta textual OK / OK:... / ERR:...
 function runText(script, cb) {
     runPS(PS_HEAD + script, function (err, stdout, stderr) {
+        splog('runText stdout=' + (stdout ? String(stdout).trim().substring(0, 200) : 'null') +
+            ' stderr=' + (stderr ? String(stderr).substring(0, 200) : 'null') +
+            ' err=' + (err ? String(err.code || '?') : 'null'));
         if (err) {
             cb({ ok: false, error: 'PowerShell exit ' + (err.code || '?') + (stderr ? (' stderr=' + String(stderr).substring(0, 300)) : (' ' + err.message)) });
             return;
         }
         var s = String(stdout || '').trim();
         if (s.indexOf('ERR:') === 0) { cb({ ok: false, error: s.substring(4) }); return; }
+        if (s.indexOf('OK') !== 0) {
+            var e3 = 'resposta inesperada' + (s ? (': ' + s.substring(0, 250)) : ' (stdout vazio)') +
+                (stderr ? (' stderr=' + String(stderr).substring(0, 200)) : '');
+            splog('runText unexpected: ' + e3);
+            cb({ ok: false, error: e3 });
+            return;
+        }
         cb({ ok: true, result: s.indexOf('OK:') === 0 ? s.substring(3) : null });
     });
 }
@@ -470,6 +499,37 @@ var handlers = {
                 res(r);
             }
         );
+    },
+
+    // Diagnóstico do ambiente PowerShell no cliente (v1.1.5)
+    // Sintaxe 100% PS 5.1: nada de && / || / ternário (parse error → $out vazio silencioso)
+    psInfo: function (nodeid, reqid, params, res) {
+        runJson(
+            "$out = @(); " +
+            "$psv = $null; try { $psv = $PSVersionTable.PSVersion.ToString() } catch {}; " +
+            "$lm = $null; try { $lm = $ExecutionContext.SessionState.LanguageMode.ToString() } catch {}; " +
+            "$who = $null; try { $who = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name } catch {}; " +
+            "$is64 = $null; try { $is64 = [Environment]::Is64BitProcess } catch {}; " +
+            "$psPath = $null; try { $psPath = $PSHOME } catch {}; " +
+            "$svc = $null; $svcErr = $null; " +
+            "try { $svc = Get-Service -Name Spooler -ErrorAction Stop } catch { $svcErr = $_.Exception.Message }; " +
+            "$gp = $null; $gpErr = $null; " +
+            "try { $gp = @(Get-Printer).Count } catch { $gpErr = $_.Exception.Message }; " +
+            "$gpp = $null; $gppErr = $null; " +
+            "try { $gpp = @(Get-PrinterPort).Count } catch { $gppErr = $_.Exception.Message }; " +
+            "$svcStatus = 'NULL'; if ($svc) { $svcStatus = $svc.Status.ToString() }; " +
+            "$out += [pscustomobject]@{ " +
+            "  psVersion=$psv; languageMode=$lm; user=$who; is64BitProcess=$is64; psHome=$psPath; " +
+            "  spoolerService=$svcStatus; spoolerError=$svcErr; " +
+            "  printerCount=$gp; printerError=$gpErr; portCount=$gpp; portError=$gppErr; " +
+            "  hostname=$env:COMPUTERNAME " +
+            "} ",
+            function (r) {
+                if (r.ok && (!r.result || !r.result.length)) { res({ ok: false, error: 'psInfo sem dados (parse/CLM?)' }); return; }
+                if (r.ok) r.result = r.result[0];
+                res(r);
+            }
+        );
     }
 };
 
@@ -478,7 +538,7 @@ var handlers = {
 var ALLOWED = ['inventory', 'addPrinter', 'deletePrinter', 'renamePrinter', 'setDefaultPrinter',
     'setPrinterConfig', 'pausePrinter', 'resumePrinter', 'testPage', 'listDrivers', 'listPorts',
     'deletePort', 'discover', 'addFoundPrinter', 'getJobs', 'jobAction', 'clearQueue',
-    'spoolerStatus', 'spoolerAction', 'webPanel', 'setDebug'];
+    'spoolerStatus', 'spoolerAction', 'webPanel', 'psInfo', 'setDebug'];
 
 function consoleaction(args, rights, sessionid, parent) {
     mesh = parent;

@@ -177,7 +177,10 @@ module.exports.spooler = function (parent) {
                     return;
                 }
                 delete obj.pending[reqid];
-                SP_LOG.raw('agentResult op=' + (command.op || p.op) + ' ok=' + (command.ok === true) + (command.error ? (' error=' + command.error) : ''));
+                SP_LOG.raw('agentResult op=' + (command.op || p.op) + ' ok=' + (command.ok === true) +
+                    (command.error ? (' error=' + String(command.error).substring(0, 300)) : '') +
+                    ' result=' + JSON.stringify(command.result == null ? null :
+                        (Array.isArray(command.result) ? command.result.slice(0, 3) : command.result)).substring(0, 300));
                 if (!command.ok) {
                     obj.audit(p.user, p.nodeid, p.op, command.target || null, command.error || 'erro no agente', false);
                 }
@@ -244,6 +247,20 @@ module.exports.spooler = function (parent) {
                 // ---- painel web da impressora ----
                 case 'webPanel':
                     obj.agentRequest(command, sid, user);
+                    break;
+
+                // ---- diagnóstico (v1.1.5) ----
+                case 'psInfo':
+                    obj.agentRequest(command, sid, user);
+                    break;
+
+                // debug agent-side ligável remotamente (grava spooler-plugin.txt no cliente)
+                case 'setDebug':
+                    obj.sendToAgent(command.nodeid, {
+                        action: 'plugin', plugin: 'spooler',
+                        pluginaction: 'setDebug', params: command.params || {}
+                    });
+                    obj.send(sid, { action: 'plugin', plugin: 'spooler', method: 'agentResult', op: 'setDebug', nodeid: command.nodeid, ok: true, result: { debug: (command.params && command.params.value) === 'true' } });
                     break;
 
                 // ---- dados locais (sem agente) ----

@@ -1,5 +1,18 @@
 # Changelog — Spooler Plugin MeshCentral
 
+## 1.1.5 (2026-10-06)
+### Added
+- **Handler `psInfo`** (agente): diagnóstico do ambiente PowerShell no cliente — versão PS, Language Mode (detecta CLM), usuário do processo, 64-bit, PSHOME, status/erro do `Get-Service Spooler`, contagem de `Get-Printer`/`Get-PrinterPort` (cada um com erro capturado). Sintaxe 100% PS 5.1.
+- **Botão "Diagnóstico PS"** na aba Serviço Spooler (device tab) + botão liga/desliga **Debug agente** (`setDebug` → grava `spooler-plugin.txt` no cliente, padrão Tracer).
+
+### Fixed
+- **`runJson` mascarava falhas como `ok:true, []`**: erro de parse no script PS não mata o processo — PS 5.1 pula pro `Write-Output` final com `$out` vazio e o erro vai só pro stderr. Sintoma: "Servico Spooler nao encontrado" com resultado vazio (BR-25005). Agora: (1) sentinela ausente → erro explícito com stdout/stderr no `spooler-plugin.txt` do cliente + resposta ao server; (2) `[]` com stderr não-vazio → erro com stderr anexado; (3) `[]` limpo → `ok:true` (comportamento legítimo preservado).
+- **`runText` aceitava qualquer stdout como sucesso**: resposta sem prefixo OK/OK:/ERR: agora falha com o stdout cru na mensagem.
+- **Log raw ampliado**: agente loga stdout.len/stderr de cada execução PS (`runJson`/`runText`); server loga preview do `result` JSON em cada `agentResult`.
+
+### Notes
+- Causa raiz provável do "Spooler nao encontrado" na BR-25005: script quebrando no meio com `$ErrorActionPreference='SilentlyContinue'` engolindo a exceção → `$out` vazio → handler validava como erro. Com `psInfo` + novo `runJson`, a próxima ocorrência traz stderr real. **Importante**: mudança em `modules_meshcore/` exige restart do MeshCentral + reconexão dos agentes.
+
 ## 1.1.4 (2026-10-06)
 ### Fixed
 - **Filas nunca carregavam** (`modules_meshcore/spooler.js:getJobs`): referência `$name` (variável PS) no código JS em vez de `name` → `ReferenceError` matava o handler inteiro antes de responder. Fix: usar `name` (JS) na interpolação da string do script.

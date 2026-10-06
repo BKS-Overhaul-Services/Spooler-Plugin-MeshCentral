@@ -149,9 +149,12 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
       <button class="btn" onclick="spoolerAction('start')">Iniciar</button>
       <button class="btn" onclick="spoolerAction('stop')">Parar</button>
       <button class="btn btn-primary" onclick="spoolerAction('restart')">Reiniciar</button>
+      <button class="btn btn-sm" onclick="loadPsInfo()">Diagnóstico PS</button>
+      <button class="btn btn-sm" id="dbgBtn" onclick="toggleAgentDebug()">Debug agente: OFF</button>
       <span class="muted" id="spoolerInfo"></span>
     </div>
     <div id="spoolerStatus"><div class="empty">—</div></div>
+    <div id="psInfo" style="display:none"></div>
   </div>
 </div>
 
@@ -317,6 +320,7 @@ function handleResult(d){
     case 'spoolerStatus': _spooler=r; renderSpooler(); break;
     case 'spoolerAction': toast('Spooler: '+(r&&r.status?r.status:'ok')); loadSpoolerStatus(); break;
     case 'webPanel': renderWebPanel(r); break;
+    case 'psInfo': renderPsInfo(r); break;
   }
 }
 
@@ -617,6 +621,35 @@ function spoolerAction(action){
   if(action==='stop'&&!confirm('Parar o serviço de spooler? Os jobs ficarão retidos.'))return;
   setBusy('spoolerAction',true);
   send('spoolerAction',{action:action});
+}
+
+/* ===== DIAGNÓSTICO PS + DEBUG AGENTE (v1.1.5) ===== */
+var _agentDebug=false;
+function loadPsInfo(){
+  $('psInfo').style.display='block';
+  $('psInfo').innerHTML='<div class="loading">Coletando diagnóstico do PowerShell no cliente...</div>';
+  setBusy('psInfo',true);
+  send('psInfo',{});
+}
+function renderPsInfo(d){
+  var rows=[
+    ['Hostname',d.hostname],['PowerShell',d.psVersion],['Language Mode',d.languageMode],
+    ['Processo 64-bit',d.is64BitProcess===true?'sim':(d.is64BitProcess===false?'não':'?')],
+    ['Usuário do processo',d.user],['PSHOME',d.psHome],
+    ['Serviço Spooler',d.spoolerService+(d.spoolerError?(' (ERRO: '+d.spoolerError+')'):'')],
+    ['Get-Printer',d.printerCount+(d.printerError?(' (ERRO: '+d.printerError+')'):'')+' impressora(s)'],
+    ['Get-PrinterPort',d.portCount+(d.portError?(' (ERRO: '+d.portError+')'):'')+' porta(s)']
+  ];
+  var h='<div class="panel-title" style="margin-top:8px">Diagnóstico PowerShell (cliente)</div><table class="tbl"><tbody>';
+  rows.forEach(function(r){h+='<tr><td style="width:180px"><b>'+esc(r[0])+'</b></td><td>'+esc(r[1]==null?'—':String(r[1]))+'</td></tr>';});
+  h+='</tbody></table>';
+  $('psInfo').innerHTML=h;
+}
+function toggleAgentDebug(){
+  _agentDebug=!_agentDebug;
+  if(ms)ms.send({action:'plugin',plugin:'spooler',pluginaction:'setDebug',nodeid:nodeid,params:{value:String(_agentDebug)}});
+  $('dbgBtn').textContent='Debug agente: '+(_agentDebug?'ON':'OFF');
+  toast('Debug do agente '+(_agentDebug?'ligado':'desligado')+( _agentDebug?' — loga em spooler-plugin.txt no cliente':''));
 }
 
 /* ===== PAINEL WEB ===== */
