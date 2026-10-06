@@ -60,7 +60,7 @@ module.exports.spooler = function (parent) {
                     if (now - obj.pending[r].ts > 120000) {
                         var p = obj.pending[r];
                         SP_LOG.raw('reqid timeout op=' + p.op + ' node=' + p.nodeid);
-                        obj.send(p.sid, { action: 'plugin', plugin: 'spooler', method: 'agentResult', op: p.op, nodeid: p.nodeid, ok: false, error: 'Timeout: agente não respondeu (offline?)', reqid: r });
+                        obj.send(p.sid, { action: 'plugin', plugin: 'spooler', method: 'agentResult', op: p.op, nodeid: p.nodeid, ok: false, error: 'Timeout: agente não respondeu (offline?)', reqid: r, _batch: p.batch || undefined });
                         delete obj.pending[r];
                     }
                 }
@@ -136,7 +136,7 @@ module.exports.spooler = function (parent) {
             return;
         }
         var reqid = obj.newReqId();
-        obj.pending[reqid] = { sid: sid, nodeid: nodeid, op: command.pluginaction, user: user, ts: Date.now() };
+        obj.pending[reqid] = { sid: sid, nodeid: nodeid, op: command.pluginaction, user: user, ts: Date.now(), batch: (command.params && command.params._batch) ? { done: 0 } : null };
         SP_LOG.raw('agentRequest op=' + command.pluginaction + ' node=' + obj.getNodeName(nodeid) + ' reqid=' + reqid + ' params=' + JSON.stringify(command.params || {}).substring(0, 200));
         var r = obj.sendToAgent(nodeid, {
             action: 'plugin',
@@ -148,7 +148,7 @@ module.exports.spooler = function (parent) {
         if (!r.ok) {
             delete obj.pending[reqid];
             obj.audit(user, nodeid, command.pluginaction, command.params && (command.params.name || command.params.ip || ''), r.error, false);
-            obj.send(sid, { action: 'plugin', plugin: 'spooler', method: 'agentResult', op: command.pluginaction, nodeid: nodeid, reqid: reqid, ok: false, error: r.error });
+            obj.send(sid, { action: 'plugin', plugin: 'spooler', method: 'agentResult', op: command.pluginaction, nodeid: nodeid, reqid: reqid, ok: false, error: r.error, _batch: (command.params && command.params._batch) || undefined });
         }
     };
 
@@ -187,7 +187,8 @@ module.exports.spooler = function (parent) {
                 obj.send(p.sid, {
                     action: 'plugin', plugin: 'spooler', method: 'agentResult',
                     op: command.op || p.op, nodeid: p.nodeid, reqid: reqid,
-                    ok: command.ok, result: command.result, error: command.error
+                    ok: command.ok, result: command.result, error: command.error,
+                    _batch: p.batch || undefined
                 });
                 return;
             }

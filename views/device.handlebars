@@ -194,8 +194,9 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
   </div>
   <div class="dlg-foot">
     <button class="btn" onclick="closeDlg('dlgAdd')">Cancelar</button>
-    <button class="btn btn-primary" onclick="doAddPrinter()">Adicionar</button>
+    <button class="btn btn-primary" id="addBtn" onclick="doAddPrinter()">Adicionar</button>
   </div>
+  <div class="dlg-status muted" id="addStatus" style="padding:0 12px 10px"></div>
 </dialog>
 
 <!-- DIALOG: instalar impressora encontrada -->
@@ -210,8 +211,9 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
   </div>
   <div class="dlg-foot">
     <button class="btn" onclick="closeDlg('dlgInstall')">Cancelar</button>
-    <button class="btn btn-primary" onclick="doInstallFound()">Instalar</button>
+    <button class="btn btn-primary" id="instBtn" onclick="doInstallFound()">Instalar</button>
   </div>
+  <div class="dlg-status muted" id="instStatus" style="padding:0 12px 10px"></div>
 </dialog>
 
 <!-- DIALOG: configurar impressora -->
@@ -254,7 +256,6 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
     <iframe id="webFrame" sandbox="allow-same-origin"></iframe>
   </div>
 </dialog>
-
 <!-- DIALOG: excluir confirmação -->
 <dialog id="dlgDel">
   <div class="dlg-head" style="background:#c62828"><span>Confirmar exclusão</span><button class="btn btn-sm" onclick="closeDlg('dlgDel')">✕</button></div>
@@ -304,14 +305,41 @@ function send(action,params){ if(ms){ ms.send({action:'plugin',plugin:'spooler',
 function handleResult(d){
   var op=d.op;
   setBusy(op,false);
-  if(!d.ok){ toast((op)+': '+(d.error||'erro'),true); if(op==='inventory'){$('invInfo').textContent='erro: '+d.error;} return; }
+  if(!d.ok){
+    toast(op+': '+(d.error||'erro'),true);
+    // destrava dialogs de instalação e mostra o erro dentro deles (dá pra tentar de novo)
+    if(op==='addPrinter')dlgBusy('dlgAdd','addBtn','addStatus',false,'Erro: '+(d.error||'falha desconhecida'));
+    if(op==='addFoundPrinter')dlgBusy('dlgInstall','instBtn','instStatus',false,'Erro: '+(d.error||'falha desconhecida'));
+    if(op==='inventory'){$('invInfo').textContent='erro: '+d.error;}
+    return;
+  }
   var r=d.result;
   switch(op){
     case 'inventory': renderPrinters(r||[]); break;
     case 'listDrivers': _drivers=r||[]; fillDriverSelects(); renderDrivers(); break;
     case 'listPorts': _ports=r||[]; fillPortSelects(); renderPorts(); break;
-    case 'addPrinter': toast('Impressora adicionada'); refreshInventory(); loadPorts(); break;
-    case 'addFoundPrinter': toast('Impressora instalada'); closeDlg('dlgInstall'); refreshInventory(); break;
+    case 'addPrinter':
+      dlgBusy('dlgAdd','addBtn','addStatus',false,'');
+      closeDlg('dlgAdd');
+      toast('Impressora "'+(r&&r.name?r.name:'')+'" instalada com sucesso');
+      refreshInventory(); loadPorts();
+      break;
+    case 'addFoundPrinter':
+      if(d._batch){
+        _batch.done++; if(d.ok)_batch.ok++; else _batch.fail++;
+        $('discInfo').textContent='Instalando '+_batch.done+'/'+_batch.total+' (ok: '+_batch.ok+', falha: '+_batch.fail+')...';
+        if(_batch.done>=_batch.total){
+          $('discInfo').textContent='Lote concluído: '+_batch.ok+' instalada(s), '+_batch.fail+' falha(s)';
+          toast('Lote concluído: '+_batch.ok+' instalada(s), '+_batch.fail+' falha(s)', _batch.fail>0);
+        }
+      } else {
+        dlgBusy('dlgInstall','instBtn','instStatus',false,'');
+        closeDlg('dlgInstall');
+        toast('Impressora "'+(r&&r.name?r.name:'')+'" instalada com sucesso');
+        _selected={}; $('installSelBtn').disabled=true; $('installSelBtn').textContent='Instalar selecionadas (0)';
+      }
+      refreshInventory();
+      break;
     case 'deletePrinter': toast('Impressora excluída'); closeDlg('dlgDel'); refreshInventory(); break;
     case 'renamePrinter': toast('Impressora renomeada'); closeDlg('dlgRename'); refreshInventory(); break;
     case 'setDefaultPrinter': toast('Padrão definido'); refreshInventory(); break;
@@ -409,12 +437,16 @@ function showAddDlg(){
   if(!_drivers.length){send('listDrivers');}
   $('dlgAdd').showModal();
 }
+function dlgBusy(dlgId,btnId,statusId,busy,msg){
+  var b=$(btnId),s=$(statusId);
+  if(b)b.disabled=busy;
+  if(s){s.textContent=msg||'';s.style.color=busy?'#003366':'#c62828';}
+}
 function doAddPrinter(){
   var name=$('addName').value.trim(),ip=$('addIp').value.trim(),driver=$('addDriver').value,port=parseInt($('addPort').value,10)||9100;
   if(!name||!ip||!driver){toast('Preencha nome, IP e driver',true);return;}
-  setBusy('addPrinter',true);
+  dlgBusy('dlgAdd','addBtn','addStatus',true,'Criando porta e instalando impressora (pode levar até 60s — driver sendo preparado)...');
   send('addPrinter',{name:name,ip:ip,driver:driver,port:port,shared:$('addShared').checked,setDefault:$('addDefault').checked});
-  closeDlg('dlgAdd');
 }
 function showConfig(name){
   var p=_printers.find(function(x){return x.name===name;});
@@ -567,9 +599,10 @@ function showInstall(ip){
 function doInstallFound(){
   var ip=$('instIp').value,name=$('instName').value.trim(),driver=$('instDriver').value,port=parseInt($('instPort').value,10)||9100;
   if(!name||!driver){toast('Preencha nome e driver',true);return;}
-  setBusy('addFoundPrinter',true);
+  dlgBusy('dlgInstall','instBtn','instStatus',true,'Instalando "'+esc(name)+'" (o Windows prepara o driver — pode levar até 60s)...');
   send('addFoundPrinter',{ip:ip,name:name,driver:driver,port:port});
 }
+var _batch={total:0,done:0,ok:0,fail:0};
 function installSelected(){
   var ips=Object.keys(_selected);
   if(!ips.length)return;
@@ -577,13 +610,14 @@ function installSelected(){
   var driver=prompt('Driver para TODAS as selecionadas (ex: HP Universal Printing PCL 6):','');
   if(!driver)return;
   var port=parseInt(prompt('Porta TCP (padrão 9100):','9100'),10)||9100;
-      ips.forEach(function(ip,idx){
+  _batch={total:ips.length,done:0,ok:0,fail:0};
+  $('discInfo').textContent='Instalando 0/'+ips.length+'...';
+  ips.forEach(function(ip,idx){
     setTimeout(function(){
       var f=_found.find(function(x){return x.ip===ip;})||{};
       var name=bestPrinterName(f);
-      setBusy('addFoundPrinter',true);
-      send('addFoundPrinter',{ip:ip,name:name,driver:driver,port:port});
-    },idx*1500);
+      send('addFoundPrinter',{ip:ip,name:name,driver:driver,port:port,_batch:true});
+    },idx*2000);
   });
 }
 

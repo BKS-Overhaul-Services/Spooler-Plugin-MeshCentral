@@ -1,5 +1,13 @@
 # Changelog — Spooler Plugin MeshCentral
 
+## 1.1.12 (2026-10-06)
+### Fixed
+- **Instalação sem feedback** (views/device.handlebars): `Add-Printer` com driver real leva 10-60s (stage do driver pelo spooler — medido 15,5s com EPSON L5590), mas o dialog de instalação não mostrava estado e o `doAddPrinter` fechava antes do resultado. Agora: dialog mostra "Instalando... (pode levar até 60s)" com botão desabilitado; **sucesso** fecha o dialog + toast com o nome da impressora; **erro** destrava o dialog e mostra a mensagem dentro dele (permite tentar de novo sem refazer o discovery).
+- **Instalação em lote sem progresso** (`installSelected`): agora mostra "Instalando N/M (ok: X, falha: Y)" no `discInfo` durante o lote e toast final com o resumo. Server ecoa flag `_batch` nas respostas (normal, erro imediato e timeout) para o contador não travar.
+
+### Notes
+- Medição local: `Add-PrinterPort` ~2s; `Add-Printer` com driver EPSON L5590 = 15,5s. O timeout do `reqid` (2min) cobre bem, mas o usuário precisava saber que está rodando.
+
 ## 1.1.11 (2026-10-06)
 ### Added
 - **Enriquecimento de descoberta via IPP/IPPS** (`modules_meshcore/spooler.js:discover`): para cada host com 9100 aberta, cascade de identidade — (1) IPP `Get-Printer-Attributes` plano na 631 `/ipp/print`; (2) IPPS (TLS com validação de cert desativada) quando o device exige upgrade (ex: Epson IPP-Server responde 426); (3) PJL `INFO ID` na 9100; (4) HTTP `<title>` na 80. Parsing IPP real (struct `tag | nameLen | name | valueLen(2 BE) | value`) extraindo `printer-make-and-model`, `printer-name` e `printer-firmware-string-version` pelo comprimento exato — sem heurística de regex. Validado com 2 impressoras físicas: EPSON L5590 Series (via IPPS) e HP LaserJet MFP M426dw (via IPP, + printerName NPI3E0611A + firmware 20201022). Resultado do discover agora inclui `model`, `printerName`, `firmware`, `modelSource` (ipp|ipp-name|pjl|http).
