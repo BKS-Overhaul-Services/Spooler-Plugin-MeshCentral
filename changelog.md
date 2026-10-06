@@ -1,5 +1,11 @@
 # Changelog — Spooler Plugin MeshCentral
 
+## 1.1.4 (2026-10-06)
+### Fixed
+- **Filas nunca carregavam** (`modules_meshcore/spooler.js:getJobs`): referência `$name` (variável PS) no código JS em vez de `name` → `ReferenceError` matava o handler inteiro antes de responder. Fix: usar `name` (JS) na interpolação da string do script.
+- **Painel web não renderizava** (`views/device.handlebars:renderWebPanel`): `$('webIp').textContent()` chamado como função — `textContent` é string, não método → `TypeError` após resposta bem-sucedida do agente. Fix: propriedade sem parênteses.
+- **Link "Abrir dispositivo" do painel admin era no-op** (`views/admin.handlebars:openDevice`): usava `parent.goDevice`/`postMessage` que não existem no MeshCentral (painel abre standalone via `/pluginadmin.ashx?pin=spooler`). Fix: navegação padrão validada no Tracer (v3.5.4/v3.5.5) — `/?viewmode=10&gotonode=<id>` com strip do prefixo `node//`.
+
 ## 1.1.3 (2026-10-06)
 ### Fixed
 - **Plumbing PowerShell→JSON reescrito** (`modules_meshcore/spooler.js`):

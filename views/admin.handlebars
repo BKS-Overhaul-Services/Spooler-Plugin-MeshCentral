@@ -81,12 +81,11 @@ function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'
 function $(id){return document.getElementById(id);}
 
 function openDevice(nid){
-  // abre o dispositivo no MeshCentral (navegação do frame pai)
+  // Navegação validada no Tracer (v3.5.4/v3.5.5): path root-relative + strip 'node//'.
+  // parent.goDevice/postMessage não existem no MeshCentral — painel admin abre standalone.
   try{
-    if(typeof parent!== 'undefined' && parent.goDevice){ parent.goDevice(nid); return; }
-  }catch(e){}
-  try{
-    if(typeof parent!=='undefined'&&parent.postMessage){parent.postMessage({cmd:'openDevice',nodeid:nid},'*');}
+    if(typeof nid==='string'&&nid.indexOf('node//')===0)nid=nid.substring(6);
+    window.location.href='/?viewmode=10&gotonode='+encodeURIComponent(nid);
   }catch(e){}
   dlog('openDevice '+nid);
 }

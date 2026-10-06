@@ -386,7 +386,7 @@ var handlers = {
     getJobs: function (nodeid, reqid, params, res) {
         var name = params.name ? q(params.name) : null;
         runJson(
-            "$out = @(Get-PrintJob" + ($name ? " -PrinterName '" + name + "'" : "") + " | Select-Object Id, PrinterName, DocumentName, UserName, JobStatus, SubmittedTime, PagesPrinted, TotalPages, Size)",
+            "$out = @(Get-PrintJob" + (name ? " -PrinterName '" + name + "'" : "") + " | Select-Object Id, PrinterName, DocumentName, UserName, JobStatus, SubmittedTime, PagesPrinted, TotalPages, Size)",
             res
         );
     },

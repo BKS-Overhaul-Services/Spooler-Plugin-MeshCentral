@@ -641,7 +641,7 @@ function renderWebPanel(r){
   var m=body.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
   var inner=m?m[1]:body;
   inner=inner.replace(/<script[\s\S]*?<\/script>/gi,'').replace(/\son\w+="[^"]*"/gi,'');
-  $('webFrame').srcdoc='<base href="http://'+esc($('webIp').textContent())+'/">'+inner;
+  $('webFrame').srcdoc='<base href="http://'+esc($('webIp').textContent)+'/">'+inner;
 }
 
 /* ===== AUDITORIA ===== */
