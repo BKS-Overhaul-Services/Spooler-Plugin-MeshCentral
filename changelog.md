@@ -1,5 +1,9 @@
 # Changelog — Spooler Plugin MeshCentral
 
+## 1.1.13 (2026-10-06)
+### Fixed
+- **Spam de requisições idênticas ao agente** (views/device.handlebars): o frontend repetia `inventory`/`spoolerStatus`/`listDrivers`/`listPorts` várias vezes seguidas — cada uma spawnava PowerShell no cliente (~1-2s CPU). Causas: (1) `switchTab` recarregava a aba em **todo clique**; (2) `refreshInventory()` chamado em cadeia por cada mutação (add→refresh, delete→refresh...); (3) sem guard de requisição em voo. Fix: guard `_ops[op]` nos loaders (`skip dup`), auto-load de aba só na 1ª ativação (`_tabLoaded`) e debounce de 300ms no `refreshInventory` (mutações em sequência = 1 fetch).
+
 ## 1.1.12 (2026-10-06)
 ### Fixed
 - **Instalação sem feedback** (views/device.handlebars): `Add-Printer` com driver real leva 10-60s (stage do driver pelo spooler — medido 15,5s com EPSON L5590), mas o dialog de instalação não mostrava estado e o `doAddPrinter` fechava antes do resultado. Agora: dialog mostra "Instalando... (pode levar até 60s)" com botão desabilitado; **sucesso** fecha o dialog + toast com o nome da impressora; **erro** destrava o dialog e mostra a mensagem dentro dele (permite tentar de novo sem refazer o discovery).

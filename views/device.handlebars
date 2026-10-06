@@ -359,19 +359,27 @@ function handleResult(d){
 }
 
 /* ===== TABS ===== */
+var _tabLoaded={}; // auto-load só na 1ª ativação de cada aba (v1.1.13 anti-spam)
 function switchTab(n){
   ['printers','discover','jobs','ports','spooler','audit'].forEach(function(t){
     $('t'+t.charAt(0).toUpperCase()+t.slice(1)).classList.toggle('active',t===n);
     $('pane-'+t).classList.toggle('active',t===n);
   });
-  if(n==='audit')loadAudit();
-  if(n==='ports'&&!_drivers.length)loadDrivers();
-  if(n==='ports'&&!_ports.length)loadPorts();
-  if(n==='spooler')loadSpoolerStatus();
+  if(n==='audit'&&!_tabLoaded.audit){_tabLoaded.audit=true;loadAudit();}
+  if(n==='ports'){ if(!_drivers.length)loadDrivers(); if(!_ports.length)loadPorts(); }
+  if(n==='spooler'&&!_tabLoaded.spooler){_tabLoaded.spooler=true;loadSpoolerStatus();}
 }
 
 /* ===== INVENTÁRIO ===== */
+var _invDeb=null;
 function refreshInventory(){
+  // debounce 300ms: mutações em sequência (addPrinter→loadPorts→refresh) geram 1 só fetch
+  if(_invDeb){clearTimeout(_invDeb);_invDeb=null;}
+  if(_ops.inventory){dlog('refreshInventory: já em voo, será refetchado no debounce');}
+  _invDeb=setTimeout(function(){_invDeb=null;_doRefreshInventory();},300);
+}
+function _doRefreshInventory(){
+  if(_ops.inventory){dlog('skip dup inventory');return;}
   $('printerList').innerHTML='<div class="loading">Carregando inventário do dispositivo...</div>';
   setBusy('inventory',true);
   send('inventory');
@@ -666,6 +674,7 @@ function clearQueue(){
 
 /* ===== PORTAS & DRIVERS ===== */
 function loadPorts(){
+  if(_ops.listPorts){dlog('skip dup listPorts');return;}
   $('portList').innerHTML='<div class="loading">...</div>';
   setBusy('listPorts',true);
   send('listPorts');
@@ -688,6 +697,7 @@ function delPort(name){
   send('deletePort',{name:name});
 }
 function loadDrivers(){
+  if(_ops.listDrivers){dlog('skip dup listDrivers');return;}
   $('driverList').innerHTML='<div class="loading">...</div>';
   setBusy('listDrivers',true);
   send('listDrivers');
@@ -704,6 +714,7 @@ function renderDrivers(){
 
 /* ===== SPOOLER ===== */
 function loadSpoolerStatus(){
+  if(_ops.spoolerStatus){dlog('skip dup spoolerStatus');return;}
   setBusy('spoolerStatus',true);
   send('spoolerStatus');
 }
@@ -809,6 +820,7 @@ if(ms&&ms.socket){
 
 document.addEventListener('DOMContentLoaded',function(){
   dlog('init');
+  _tabLoaded.spooler=true; // init já cobre a 1ª carga do spooler
   refreshInventory();
   loadSpoolerStatus();
 });
