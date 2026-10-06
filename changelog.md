@@ -1,5 +1,9 @@
 # Changelog — Spooler Plugin MeshCentral
 
+## 1.1.7 (2026-10-06)
+### Fixed
+- **Descoberta SNMP dava timeout (2 min)** (`modules_meshcore/spooler.js:discover`): reverse DNS (`Dns.GetHostEntry`) era síncrono e sem timeout por IP encontrado — em rede AD sem DNS reverso, cada lookup trava 5-10s; com N dispositivos achados, estourava o timeout do `runPS`. Fix: `BeginGetHostEntry` + `WaitOne(1500)` — no máx 1,5s por IP, hostname fica `null` quando não resolve (medido: 2 IPs sem DNS = 4,6s total; antes travava o processo).
+
 ## 1.1.6 (2026-10-06)
 ### Fixed
 - **CRÍTICO — `runPS` não capturava stdout no agente** (`modules_meshcore/spooler.js`): o `execFile` do MeshAgent **não é o do Node.js** — é shim em C/Duktape (`ILibDuktape_ChildProcess.c`) onde o callback é o evento `exit` com assinatura `(exitCode, signal)`, **sem** `(error, stdout, stderr)`. Resultado: todo comando PS rodava (~130ms, exit 0) e devolvia stdout vazio/null → "PS sem resposta: sentinela ausente" em TODOS os handlers (inventory, spoolerStatus, psInfo...). Local em Node real funcionava — por isso nunca reproduziu no bench. Fix seguindo o padrão do próprio core do MeshCentral (`agents/meshcore.js:1512`): acumular saída via `p.stdout.on('data')`/`p.stderr.on('data')` + embutir `exit\r\n` no fim do script + timeout manual (o shim ignora `options.timeout`/`maxBuffer`) + manter referência do child até o exit (GC mata processo vivo).

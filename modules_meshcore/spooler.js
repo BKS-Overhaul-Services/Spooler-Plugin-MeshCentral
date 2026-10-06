@@ -412,9 +412,10 @@ var handlers = {
             "  }; " +
             "  Wait-Job $jobs -Timeout 8 | Out-Null; " +
             "  $jobs | ForEach-Object { $r = Receive-Job $_ -ErrorAction SilentlyContinue; if ($r) { $found += $r }; Remove-Job $_ -Force -ErrorAction SilentlyContinue }; " +
-            "  $found | ForEach-Object { " +
-            "    $ip2 = $_; $name2 = $null; " +
-            "    try { $name2 = ([System.Net.Dns]::GetHostEntry($ip2)).HostName } catch {} " +
+            "  foreach ($ip2 in $found) { " +
+            "    $name2 = $null; " +
+            "    $rt = [System.Net.Dns]::BeginGetHostEntry($ip2, $null, $null); " +
+            "    if ($rt.AsyncWaitHandle.WaitOne(1500)) { try { $name2 = ([System.Net.Dns]::EndGetHostEntry($rt)).HostName } catch {} } " +
             "    $out += [pscustomobject]@{ ip=$ip2; hostname=$name2 } " +
             "  } " +
             "} " +
