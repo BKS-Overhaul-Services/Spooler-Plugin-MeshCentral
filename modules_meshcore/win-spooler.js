@@ -12,12 +12,24 @@
 "use strict";
 
 var mesh = null;
+var spDebugFlag = false; // gate de debug agent-side (padrão Tracer: off em produção)
 
 function splog(str) {
+    if (spDebugFlag !== true) return;
     try {
         var fs = require('fs');
         var logStream = fs.createWriteStream('spooler-plugin.txt', { flags: 'a' });
         logStream.write('\n' + new Date().toLocaleString() + ': ' + str);
+        logStream.end('\n');
+    } catch (e) {}
+}
+
+// Log de erro: sempre gravado (diagnóstico mínimo em produção)
+function sperr(str) {
+    try {
+        var fs = require('fs');
+        var logStream = fs.createWriteStream('spooler-plugin.txt', { flags: 'a' });
+        logStream.write('\n' + new Date().toLocaleString() + ' [ERROR]: ' + str);
         logStream.end('\n');
     } catch (e) {}
 }
@@ -48,7 +60,7 @@ function reply(nodeid, msg) {
         msg.plugin = 'spooler';
         msg.pluginaction = 'agentResult';
         mesh.SendCommand(JSON.stringify(msg));
-    } catch (e) { splog('reply error: ' + e.message); }
+    } catch (e) { sperr('reply error: ' + e.message); }
 }
 
 // Sanitiza string para uso dentro de aspas simples PS (duplica aspas simples)
@@ -507,6 +519,12 @@ function consoleaction(args, rights, sessionid, parent) {
     try {
         if (args.pluginaction === 'agentResult') return 'OK'; // loop guard: nunca processar própria resposta
         if (!args || args.plugin !== 'spooler') return 'OK';
+        // Liga debug agent-side: setDebug via pluginaction auxiliar (padrão Tracer)
+        if (args.pluginaction === 'setDebug') {
+            spDebugFlag = (String(args.params && args.params.value) === 'true');
+            splog('debug=' + spDebugFlag);
+            return 'OK';
+        }
         var op = args.pluginaction;
         if (ALLOWED.indexOf(op) === -1) {
             splog('acao nao permitida: ' + op);
@@ -527,14 +545,14 @@ function consoleaction(args, rights, sessionid, parent) {
         });
         return 'OK';
     } catch (e) {
-        splog('consoleaction error: ' + e.message + ' stack=' + e.stack);
+        sperr('consoleaction error: ' + e.message + ' stack=' + e.stack);
         return 'ERR';
     }
 }
 
-// Auto-teste ao carregar (log apenas)
+// Auto-teste ao carregar (log apenas, sempre gravado — 1 linha no boot)
 if (typeof require !== 'undefined') {
     try {
-        if (process.platform === 'win32') splog('win-spooler module loaded');
+        if (process.platform === 'win32') sperr('win-spooler module loaded (debug=' + spDebugFlag + ')');
     } catch (e) {}
 }

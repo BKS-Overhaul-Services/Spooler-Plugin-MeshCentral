@@ -1,5 +1,5 @@
 /**
- * Spooler — Gerenciador de Impressoras — v1.0
+ * Spooler — Gerenciador de Impressoras
  * Server-side. Padrão Tracer: serveraction + wsagents[nodeid].send + NeDB.
  *
  * Fluxo:
@@ -9,6 +9,33 @@
  *   serveraction (msg sem sid = resposta do agente) → devolve ao frontend via wssessions2[sid]
  */
 "use strict";
+
+// Configurável: gate de logs de diagnóstico (error sempre ativo)
+var SP_DEBUG = false;
+
+// Categorias de log (padrão Tracer UT_LOG)
+var SP_LOG = {
+    error: function (ctx, err, extra) {
+        try {
+            var msg = '[SP ERROR] ' + ctx + ': ' + (err && err.message ? err.message : String(err));
+            if (extra) msg += ' extra=' + JSON.stringify(extra);
+            if (SP_DEBUG) msg += ' stack=' + (err && err.stack ? err.stack : '(no stack)');
+            console.log(msg);
+        } catch (_) {}
+    },
+    debug: function () {
+        if (!SP_DEBUG) return;
+        try { console.log('[SP DEBUG] ' + Array.prototype.slice.call(arguments).join(' ')); } catch (_) {}
+    },
+    info: function () {
+        if (!SP_DEBUG) return;
+        try { console.log('[SP INFO] ' + Array.prototype.slice.call(arguments).join(' ')); } catch (_) {}
+    },
+    raw: function () {
+        if (!SP_DEBUG) return;
+        try { console.log('[SP] ' + Array.prototype.slice.call(arguments).join(' ')); } catch (_) {}
+    }
+};
 
 module.exports.spooler = function (parent) {
     var obj = {};
@@ -20,30 +47,25 @@ module.exports.spooler = function (parent) {
     obj.mdb = obj.meshServer.db;
     obj.pending = {};   // reqid → { sid, nodeid, op, user, ts }
 
-    function spError(context, err, extra) {
-        console.log('SPOOLER ERROR: context=' + context + ' msg=' + (err && err.message ? err.message : String(err)));
-        if (err && err.stack) console.log('SPOOLER ERROR: stack=' + err.stack);
-        if (extra) try { console.log('SPOOLER ERROR: extra=' + JSON.stringify(extra)); } catch (e) {}
-    }
-
     obj.server_startup = function () {
         try {
+            SP_LOG.info('server_startup: init');
             obj.meshServer.pluginHandler.spooler_db = require(__dirname + '/db.js').CreateDB(obj.meshServer);
             obj.db = obj.meshServer.pluginHandler.spooler_db;
-            console.log('SPOOLER: startup OK, db.printers=' + (obj.db.printers ? 'ok' : 'FAIL'));
+            SP_LOG.info('server_startup: db initialized db=' + (obj.db.printers ? 'ok' : 'FAIL'));
             // limpeza de pendings antigos (>2 min)
             setInterval(function () {
                 var now = Date.now();
                 for (var r in obj.pending) {
                     if (now - obj.pending[r].ts > 120000) {
                         var p = obj.pending[r];
-                        console.log('SPOOLER: reqid timeout op=' + p.op + ' node=' + p.nodeid);
+                        SP_LOG.raw('reqid timeout op=' + p.op + ' node=' + p.nodeid);
                         obj.send(p.sid, { action: 'plugin', plugin: 'spooler', method: 'agentResult', op: p.op, nodeid: p.nodeid, ok: false, error: 'Timeout: agente não respondeu (offline?)', reqid: r });
                         delete obj.pending[r];
                     }
                 }
             }, 30000);
-        } catch (e) { spError('server_startup', e); }
+        } catch (e) { SP_LOG.error('server_startup', e, { step: 'init' }); }
     };
 
     // ---------------- helpers ----------------
@@ -56,22 +78,27 @@ module.exports.spooler = function (parent) {
         try {
             var wss2 = obj.meshServer.webserver.wssessions2;
             if (wss2 && sid && wss2[sid]) {
+                SP_LOG.raw('send method=' + data.method + ' sid=' + sid.substring(0, 40));
                 wss2[sid].send(JSON.stringify(data));
                 return true;
             }
-            console.log('SPOOLER SEND: session not found sid=' + (sid ? sid.substring(0, 40) : 'null') + ' method=' + data.method);
-        } catch (e) { spError('send', e, { sid: sid }); }
+            SP_LOG.raw('send: session not found sid=' + (sid ? sid.substring(0, 40) : 'null') + ' method=' + data.method);
+        } catch (e) { SP_LOG.error('send', e, { sid: sid }); }
         return false;
     };
 
     obj.sendToAgent = function (nodeid, cmd) {
         try {
             var agent = obj.meshServer.webserver.wsagents ? obj.meshServer.webserver.wsagents[nodeid] : null;
-            if (!agent) return { ok: false, error: 'Dispositivo offline ou agente não conectado' };
+            if (!agent) {
+                SP_LOG.raw('sendToAgent: agent offline node=' + nodeid);
+                return { ok: false, error: 'Dispositivo offline ou agente não conectado' };
+            }
             agent.send(JSON.stringify(cmd));
+            SP_LOG.raw('sendToAgent: op=' + cmd.pluginaction + ' reqid=' + cmd.reqid + ' node=' + nodeid);
             return { ok: true };
         } catch (e) {
-            spError('sendToAgent', e, { nodeid: nodeid });
+            SP_LOG.error('sendToAgent', e, { nodeid: nodeid });
             return { ok: false, error: 'Falha ao enviar comando ao agente: ' + e.message };
         }
     };
@@ -88,6 +115,7 @@ module.exports.spooler = function (parent) {
     obj.audit = function (user, nodeid, op, target, detail, ok) {
         try {
             if (!obj.db) return;
+            SP_LOG.raw('audit user=' + user + ' node=' + obj.getNodeName(nodeid) + ' op=' + op + ' target=' + target + ' ok=' + (ok !== false) + (detail ? (' detail=' + detail) : ''));
             obj.db.addAudit({
                 user: user || '?',
                 nodeid: nodeid || null,
@@ -97,7 +125,7 @@ module.exports.spooler = function (parent) {
                 detail: detail || null,
                 ok: ok !== false
             });
-        } catch (e) { spError('audit', e); }
+        } catch (e) { SP_LOG.error('audit', e); }
     };
 
     // Envia comando ao agente com correlação reqid
@@ -109,6 +137,7 @@ module.exports.spooler = function (parent) {
         }
         var reqid = obj.newReqId();
         obj.pending[reqid] = { sid: sid, nodeid: nodeid, op: command.pluginaction, user: user, ts: Date.now() };
+        SP_LOG.raw('agentRequest op=' + command.pluginaction + ' node=' + obj.getNodeName(nodeid) + ' reqid=' + reqid + ' params=' + JSON.stringify(command.params || {}).substring(0, 200));
         var r = obj.sendToAgent(nodeid, {
             action: 'plugin',
             plugin: 'spooler',
@@ -137,16 +166,18 @@ module.exports.spooler = function (parent) {
                 // conexão de agente não tem ws.sessionId → é resposta do agente
                 isAgent = true;
             }
+            SP_LOG.raw('serveraction action=' + command.pluginaction + ' from=' + (isAgent ? 'AGENT' : 'frontend') + ' node=' + (command.nodeid ? obj.getNodeName(command.nodeid) : '-'));
 
             // ---------- resposta do agente ----------
             if (isAgent || command.pluginaction === 'agentResult') {
                 var reqid = command.reqid;
                 var p = reqid ? obj.pending[reqid] : null;
                 if (!p) {
-                    console.log('SPOOLER: agentResult sem pending reqid=' + reqid + ' (timeout ou sessão fechada)');
+                    SP_LOG.raw('agentResult sem pending reqid=' + reqid + ' (timeout ou sessão fechada)');
                     return;
                 }
                 delete obj.pending[reqid];
+                SP_LOG.raw('agentResult op=' + (command.op || p.op) + ' ok=' + (command.ok === true) + (command.error ? (' error=' + command.error) : ''));
                 if (!command.ok) {
                     obj.audit(p.user, p.nodeid, p.op, command.target || null, command.error || 'erro no agente', false);
                 }
@@ -235,15 +266,16 @@ module.exports.spooler = function (parent) {
                     break;
 
                 default:
-                    console.log('SPOOLER: unknown pluginaction=' + command.pluginaction);
+                    SP_LOG.error('serveraction: unknown pluginaction=' + command.pluginaction, null);
             }
         } catch (e) {
-            spError('serveraction', e, { pluginaction: command ? command.pluginaction : 'N/A' });
+            SP_LOG.error('serveraction', e, { pluginaction: command ? command.pluginaction : 'N/A' });
         }
     };
 
     obj.handleAdminReq = function (req, res, user) {
         try {
+            SP_LOG.raw('handleAdminReq url=' + req.url + ' user=' + (user ? user.name : 'null'));
             if (req.query.user == 1) {
                 // aba do dispositivo
                 return res.render('device', {
@@ -252,12 +284,13 @@ module.exports.spooler = function (parent) {
                 });
             }
             if (!user || (user.siteadmin & 0xFFFFFFFF) == 0) {
+                SP_LOG.raw('handleAdminReq: 401 para ' + (user ? user.name : 'anônimo'));
                 res.sendStatus(401);
                 return;
             }
             res.render('admin', {});
         } catch (e) {
-            spError('handleAdminReq', e, { url: req.url });
+            SP_LOG.error('handleAdminReq', e, { url: req.url });
         }
     };
 
@@ -269,7 +302,7 @@ module.exports.spooler = function (parent) {
             pluginHandler.registerPluginTab({ tabTitle: 'Impressoras', tabId: 'pluginSpoolerTab' });
             QA('pluginSpoolerTab', '<iframe id="pluginIframeSpooler" style="width:100%;height:600px;overflow:auto" scrolling="yes" frameBorder=0 src="/pluginadmin.ashx?pin=spooler&nodeid=' + encodeURIComponent(currentNode._id) + '&user=1" />');
         } catch (e) {
-            spError('onDeviceRefreshEnd', e);
+            SP_LOG.error('onDeviceRefreshEnd', e);
         }
     };
 

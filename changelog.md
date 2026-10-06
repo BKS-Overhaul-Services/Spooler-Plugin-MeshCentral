@@ -1,5 +1,11 @@
 # Changelog — Spooler Plugin MeshCentral
 
+## 1.1.0 (2026-10-06)
+### Added
+- **Debug estruturado padrão Tracer**:
+  - Server-side (`spooler.js`): `SP_DEBUG` flag + categorias `SP_LOG.error` (sempre ativo, com stack se debug), `.info`, `.debug`, `.raw` (gateados). Logs instrumentados em: startup, serveraction (entrada/from=AGENT|frontend), agentRequest, agentResult, sendToAgent, send, audit, handleAdminReq, timeout de reqid.
+  - Agent-side (`win-spooler.js`): `spDebugFlag` (padrão false) gateia `splog()` no arquivo `spooler-plugin.txt`. `sperr()` grava sempre (erros + 1 linha de boot). Debug agent-side ligável via `pluginaction:'setDebug'` com `params.value='true'` (padrão Tracer setDebug).
+
 ## 1.0.2 (2026-10-06)
 ### Fixed
 - **Inventário não carregava** (`spooler.js`): frontend envia `pluginaction:'inventory'`, mas o switch do server só aceitava `getPrinters` → "unknown pluginaction=inventory". Adicionado case `inventory`.
