@@ -10,6 +10,11 @@
  */
 "use strict";
 
+// Ops de mutação (mesma lista do agente) — timeout estendido p/ fila+driver stage
+var MUTATION_SERVER_OPS = ['addPrinter', 'addFoundPrinter', 'deletePrinter', 'renamePrinter',
+    'setDefaultPrinter', 'setPrinterConfig', 'pausePrinter', 'resumePrinter',
+    'deletePort', 'jobAction', 'clearQueue', 'spoolerAction'];
+
 // Configurável: gate de logs de diagnóstico (error sempre ativo)
 var SP_DEBUG = true;
 
@@ -57,10 +62,10 @@ module.exports.spooler = function (parent) {
             setInterval(function () {
                 var now = Date.now();
                 for (var r in obj.pending) {
-                    if (now - obj.pending[r].ts > 120000) {
+                    if (now - obj.pending[r].ts > (obj.pending[r].mut ? 360000 : 120000)) {
                         var p = obj.pending[r];
-                        SP_LOG.raw('reqid timeout op=' + p.op + ' node=' + p.nodeid);
-                        obj.send(p.sid, { action: 'plugin', plugin: 'spooler', method: 'agentResult', op: p.op, nodeid: p.nodeid, ok: false, error: 'Timeout: agente não respondeu (offline?)', reqid: r, _batch: p.batch || undefined });
+                        SP_LOG.raw('reqid timeout op=' + p.op + ' node=' + p.nodeid + (p.mut ? ' (mutação)' : ''));
+                        obj.send(p.sid, { action: 'plugin', plugin: 'spooler', method: 'agentResult', op: p.op, nodeid: p.nodeid, ok: false, error: 'Timeout: agente não concluiu a operação (fila/driver stage?)', reqid: r, _batch: p.batch || undefined });
                         delete obj.pending[r];
                     }
                 }
@@ -136,7 +141,8 @@ module.exports.spooler = function (parent) {
             return;
         }
         var reqid = obj.newReqId();
-        obj.pending[reqid] = { sid: sid, nodeid: nodeid, op: command.pluginaction, user: user, ts: Date.now(), batch: (command.params && command.params._batch) ? { done: 0 } : null };
+        var isMut = MUTATION_SERVER_OPS.indexOf(command.pluginaction) !== -1;
+        obj.pending[reqid] = { sid: sid, nodeid: nodeid, op: command.pluginaction, user: user, ts: Date.now(), mut: isMut, batch: (command.params && command.params._batch) ? { done: 0 } : null };
         SP_LOG.raw('agentRequest op=' + command.pluginaction + ' node=' + obj.getNodeName(nodeid) + ' reqid=' + reqid + ' params=' + JSON.stringify(command.params || {}).substring(0, 200));
         var r = obj.sendToAgent(nodeid, {
             action: 'plugin',
@@ -174,6 +180,16 @@ module.exports.spooler = function (parent) {
                 var p = reqid ? obj.pending[reqid] : null;
                 if (!p) {
                     SP_LOG.raw('agentResult sem pending reqid=' + reqid + ' (timeout ou sessão fechada)');
+                    return;
+                }
+                // fase 'started': agente aceitou a mutação (fila) — NÃO consome o pending
+                if (command.phase === 'started') {
+                    SP_LOG.raw('agentResult STARTED op=' + (command.op || p.op) + ' reqid=' + reqid);
+                    obj.send(p.sid, {
+                        action: 'plugin', plugin: 'spooler', method: 'agentResult',
+                        op: command.op || p.op, nodeid: p.nodeid, reqid: reqid,
+                        ok: true, phase: 'started', _batch: p.batch || undefined
+                    });
                     return;
                 }
                 delete obj.pending[reqid];

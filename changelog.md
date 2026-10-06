@@ -1,5 +1,20 @@
 # Changelog — Spooler Plugin MeshCentral
 
+## 1.1.14 (2026-10-06)
+### Added
+- **Cadeia de ações: fila serial + resposta em 2 fases + verificação pós-operação** (modules_meshcore/spooler.js):
+  - **Fila de mutações** (`MUTATION_OPS`/`queueMutation`/`processQueue`): `addPrinter`, `deletePrinter`, `setDefaultPrinter`, `setPrinterConfig`, `pause/resume`, `deletePort`, `jobAction`, `clearQueue`, `spoolerAction` e derivados agora executam **1 por vez** no agente — cliques rápidos não spawnam mais PowerShell simultâneo (o spooler do Windows serializa na driver store; paralelismo só gerava trava + PS acumulado = "spam"). Leituras (inventory/listDrivers/...) continuam paralelas, fora da fila.
+  - **Resposta em 2 fases**: o agente responde imediatamente `phase:'started'` (mutação aceita na fila) e depois `phase:'done'` com o resultado. O frontend usa `started` para atualizar o status do dialog ("Na fila do agente — executando...") sem destravar nada. Server mantém o `pending` aberto entre as fases (timeout de mutação estendido para 4min — driver stage + fila).
+  - **Verificação pós-ação na cadeia PS** (`addPrinter`): após `Add-Printer`, poll de `Get-Printer` a cada 1,5s por até 30s — só retorna `ok` quando a fila de impressão está **realmente consultável** (o retorno do `Add` não garante o fim do stage do driver).
+- Teste da fila (Node, stub de `runPS` + `mesh` fake): 3 mutações simultâneas → 3 `started` imediatos + 3 `done` serializados em ~1,5s (3×500ms). PASS.
+
+### Fixed
+- **"Timeout: agente não respondeu" em mutações**: era a corrida entre o `Add-Printer` lento (15-120s) e os timeouts de 120s (runPS do agente e reqid do server). Agora: started chega em <1s (feedback), done tem 4min de janela, e a fila elimina a competição entre mutações que era a principal causa de lentidão.
+
+### Notes
+- Requer **restart do MeshCentral + reconexão dos agentes** (mudou `modules_meshcore/`).
+- Server-side: `MUTATION_SERVER_OPS` espelha a lista do agente para o timeout diferenciado; `phase:'started'` não consome o pending.
+
 ## 1.1.13 (2026-10-06)
 ### Fixed
 - **Spam de requisições idênticas ao agente** (views/device.handlebars): o frontend repetia `inventory`/`spoolerStatus`/`listDrivers`/`listPorts` várias vezes seguidas — cada uma spawnava PowerShell no cliente (~1-2s CPU). Causas: (1) `switchTab` recarregava a aba em **todo clique**; (2) `refreshInventory()` chamado em cadeia por cada mutação (add→refresh, delete→refresh...); (3) sem guard de requisição em voo. Fix: guard `_ops[op]` nos loaders (`skip dup`), auto-load de aba só na 1ª ativação (`_tabLoaded`) e debounce de 300ms no `refreshInventory` (mutações em sequência = 1 fetch).

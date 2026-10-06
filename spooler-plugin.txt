@@ -1,0 +1,42 @@
+
+06/10/2026, 18:59:58 [ERROR]: reply error: Cannot read properties of null (reading 'SendCommand')
+
+06/10/2026, 18:59:58 [ERROR]: reply error: Cannot read properties of null (reading 'SendCommand')
+06/10/2026, 18:59:58 [ERROR]: queue exec error: MUTATION_HANDLERS[item.op] is not a function
+06/10/2026, 18:59:58 [ERROR]: reply error: Cannot read properties of null (reading 'SendCommand')
+
+
+
+06/10/2026, 18:59:58 [ERROR]: queue exec error: MUTATION_HANDLERS[item.op] is not a function
+06/10/2026, 18:59:58 [ERROR]: reply error: Cannot read properties of null (reading 'SendCommand')
+06/10/2026, 18:59:58 [ERROR]: queue exec error: MUTATION_HANDLERS[item.op] is not a function
+06/10/2026, 18:59:58 [ERROR]: reply error: Cannot read properties of null (reading 'SendCommand')
+
+
+
+
+06/10/2026, 18:59:58 [ERROR]: reply error: Cannot read properties of null (reading 'SendCommand')
+
+06/10/2026, 19:00:58 [ERROR]: queue exec error: MUTATION_HANDLERS[item.op] is not a function
+06/10/2026, 19:00:58 [ERROR]: reply error: Cannot read properties of null (reading 'SendCommand')
+
+06/10/2026, 19:00:58 [ERROR]: reply error: Cannot read properties of null (reading 'SendCommand')
+
+06/10/2026, 19:00:58 [ERROR]: reply error: Cannot read properties of null (reading 'SendCommand')
+
+06/10/2026, 19:00:58 [ERROR]: queue exec error: MUTATION_HANDLERS[item.op] is not a function
+06/10/2026, 19:00:58 [ERROR]: reply error: Cannot read properties of null (reading 'SendCommand')
+
+06/10/2026, 19:00:58 [ERROR]: reply error: Cannot read properties of null (reading 'SendCommand')
+
+
+06/10/2026, 19:00:58 [ERROR]: queue exec error: MUTATION_HANDLERS[item.op] is not a function
+
+06/10/2026, 19:00:58 [ERROR]: reply error: Cannot read properties of null (reading 'SendCommand')
+
+
+06/10/2026, 19:02:22 [ERROR]: queue exec error: MUTATION_HANDLERS[item.op] is not a function
+06/10/2026, 19:02:22 [ERROR]: queue exec error: MUTATION_HANDLERS[item.op] is not a function
+
+06/10/2026, 19:02:22 [ERROR]: queue exec error: MUTATION_HANDLERS[item.op] is not a function
+

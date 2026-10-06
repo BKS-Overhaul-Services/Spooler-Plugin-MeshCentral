@@ -186,6 +186,48 @@ function q(s) {
     return String(s == null ? '' : s).replace(/'/g, "''").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
 }
 
+// ------------------- fila de mutações (v1.1.14) -------------------
+// Mutations (addPrinter, deletePrinter, setDefault, spoolerAction...) NÃO podem
+// rodar em paralelo: cada uma spawna PS e o spooler do Windows serializa na mesma
+// lock de driver store — paralelismo só gera trava e PS acumulado (spam).
+// A fila garante 1 por vez; leituras (inventory, listDrivers...) ficam fora da fila.
+var MUTATION_OPS = ['addPrinter', 'addFoundPrinter', 'deletePrinter', 'renamePrinter',
+    'setDefaultPrinter', 'setPrinterConfig', 'pausePrinter', 'resumePrinter',
+    'deletePort', 'jobAction', 'clearQueue', 'spoolerAction'];
+var mutQueue = [];      // [{ op, nodeid, reqid, params, res }]
+var mutRunning = false;
+
+function queueMutation(op, nodeid, reqid, params, res) {
+    // resposta fase 1: aceito na fila, vai executar
+    res({ ok: true, phase: 'started', op: op });
+    mutQueue.push({ op: op, nodeid: nodeid, reqid: res._reqid || reqid, params: params, res: res });
+    splog('queue: ' + op + ' len=' + mutQueue.length);
+    processQueue();
+}
+
+function processQueue() {
+    if (mutRunning) return;
+    var item = mutQueue.shift();
+    if (!item) return;
+    mutRunning = true;
+    splog('queue: exec ' + item.op + ' (restantes=' + mutQueue.length + ')');
+    try {
+        MUTATION_HANDLERS[item.op](item.nodeid, item.reqid, item.params, function (result) {
+            mutRunning = false;
+            try { item.res(result); } catch (e2) { sperr('queue res: ' + e2.message); }
+            processQueue();   // próxima da fila
+        });
+    } catch (e) {
+        mutRunning = false;
+        sperr('queue exec error: ' + e.message);
+        try { item.res({ ok: false, error: 'fila: ' + e.message }); } catch (e2) {}
+        processQueue();
+    }
+}
+
+// Handlers que executam mutações (populado no fim do arquivo)
+var MUTATION_HANDLERS = {};
+
 // ------------------------- handlers -------------------------
 
 var handlers = {
@@ -212,7 +254,10 @@ var handlers = {
         );
     },
 
-    // Adicionar impressora
+    // Adicionar impressora — com VERIFICAÇÃO PÓS-AÇÃO na cadeia (v1.1.14):
+    // 1) Add-PrinterPort/Add-Printer  2) poll Get-Printer até a fila existir (ou erro)
+    // O stage do driver pelo spooler pode levar 10-120s; o retorno 'OK' do Add não
+    // garante a fila pronta — por isso a verificação é parte do mesmo job.
     addPrinter: function (nodeid, reqid, params, res) {
         var name = q(params.name);
         var driver = q(params.driver);
@@ -235,6 +280,13 @@ var handlers = {
             "    Set-Printer -Name '" + name + "' -DriverName '" + driver + "' -PortName '" + portName + "' -ErrorAction Stop " +
             "  } " +
             "  if (" + shared + ") { Set-Printer -Name '" + name + "' -Shared $true" + (shareName ? (" -ShareName '" + shareName + "'") : '') + " } " +
+            // verificação pós-ação: espera a fila ficar consultável (até 30s, poll 1,5s)
+            "  $ok2 = $false; " +
+            "  for ($i2 = 0; $i2 -lt 20; $i2++) { " +
+            "    if (Get-Printer -Name '" + name + "' -ErrorAction SilentlyContinue) { $ok2 = $true; break } " +
+            "    Start-Sleep -Milliseconds 1500 " +
+            "  } " +
+            "  if (-not $ok2) { Write-Output 'ERR:fila nao ficou visivel apos Add (driver stage?)'; exit } " +
             "  if (" + def + ") { (New-Object -ComObject WScript.Network).SetDefaultPrinter('" + name + "') } " +
             "  Write-Output ('OK:' + '" + name + "') " +
             "} catch { Write-Output ('ERR:' + $_.Exception.Message) }",
@@ -725,6 +777,23 @@ function consoleaction(args, rights, sessionid, parent) {
         if (!h) { splog('handler inexistente: ' + op); return 'NOHANDLER'; }
         var reqid = args.reqid;
         var params = args.params || {};
+
+        // Mutação → fila serial (fase 'started' imediata; resultado final quando concluir)
+        if (MUTATION_OPS.indexOf(op) !== -1) {
+            splog('exec(mut): ' + op + ' reqid=' + reqid);
+            queueMutation(op, null, reqid, params, function (result) {
+                splog('result(mut): ' + op + ' reqid=' + reqid + ' ok=' + result.ok + (result.error ? (' err=' + result.error) : ''));
+                reply(null, {
+                    reqid: reqid, op: op, ok: result.ok,
+                    phase: result.phase || 'done',
+                    result: result.result || null, error: result.error || null,
+                    target: params.name || params.ip || params.oldName || null
+                });
+            });
+            return 'OK';
+        }
+
+        // Leitura → execução direta (paralela OK)
         splog('exec: ' + op + ' reqid=' + reqid + ' params=' + JSON.stringify(params).substring(0, 200));
         h(null, reqid, params, function (result) {
             splog('result: ' + op + ' reqid=' + reqid + ' ok=' + result.ok + (result.error ? (' err=' + result.error) : ''));

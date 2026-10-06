@@ -304,6 +304,13 @@ function send(action,params){ if(ms){ ms.send({action:'plugin',plugin:'spooler',
 
 function handleResult(d){
   var op=d.op;
+  // fase 'started': mutação aceita na fila do agente, ainda executando
+  if(d.phase==='started'){
+    if(op==='addPrinter')dlgBusy('dlgAdd','addBtn','addStatus',true,'Na fila do agente — executando no cliente...');
+    if(op==='addFoundPrinter')dlgBusy('dlgInstall','instBtn','instStatus',true,'Na fila do agente — executando no cliente (driver pode levar até 2min)...');
+    if(d._batch&&op==='addFoundPrinter')$('discInfo').textContent='Executando no cliente...';
+    return;
+  }
   setBusy(op,false);
   if(!d.ok){
     toast(op+': '+(d.error||'erro'),true);
