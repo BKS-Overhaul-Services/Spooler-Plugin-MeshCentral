@@ -1,5 +1,12 @@
 # Changelog — Spooler Plugin MeshCentral
 
+## 1.1.16 (2026-10-06)
+### Fixed
+- **Deploy parcial detectado em produção**: views novas (frontend manda `getDelta`) com server JS antigo → spam de `unknown pluginaction=getDelta`. Causa: update pela UI falhou (`Error downloading plugin: Timed out`) — views são lidas do disco a cada request, mas o server JS só troca com reload pós-arquivo-novo. Correções de resiliência: (1) server responde erro explícito "não suportada" ao frontend em ação desconhecida (antes só logava); (2) frontend desliga o polling delta ao receber esse erro e mostra toast "Plugin no servidor está desatualizado"; (3) startup loga a versão do config.json (diagnóstico imediato de deploy parcial).
+
+### Notes
+- **Deploy correto da v1.1.15/16**: copiar TODOS os arquivos (spooler.js + views/ + modules_meshcore/) para `meshcentral-data/plugins/spooler/` e reload/restart. Se a UI de update der timeout de download, copiar manualmente.
+
 ## 1.1.15 (2026-10-06)
 ### Added
 - **Worker PS persistente no agente** (modules_meshcore/spooler.js): 1 processo PowerShell vivo desde o boot; comandos entram via stdin (1 linha JSON `{id, body}`) e saem com sentinela `__SPW__{id, ok, result, error}`. Elimina o spawn (0,5-2s) de TODA operação. Health check 60s (ping), watchdog 90s por comando (mata worker wedgado; exit handler faz restart com backoff, máx 5), fallback transparente para `runJson` spawn-único se o worker estiver down. Todos os handlers JSON (`inventory`, `listDrivers`, `listPorts`, `discover`, `spoolerStatus`, `webPanel`, `psInfo`) agora passam pelo worker via `workerRun()`. Validado com impressoras reais: 3 comandos (ping/summary/getStatus) num único processo, granular respondeu em ~200ms.

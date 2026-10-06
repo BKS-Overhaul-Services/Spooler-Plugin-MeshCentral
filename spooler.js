@@ -65,7 +65,7 @@ module.exports.spooler = function (parent) {
 
     obj.server_startup = function () {
         try {
-            SP_LOG.info('server_startup: init');
+            SP_LOG.info('server_startup: init v' + (require('./config.json').version || '?') + ' (getDelta=' + (typeof obj.handleGetDelta) + ')');
             obj.meshServer.pluginHandler.spooler_db = require(__dirname + '/db.js').CreateDB(obj.meshServer);
             obj.db = obj.meshServer.pluginHandler.spooler_db;
             SP_LOG.info('server_startup: db initialized db=' + (obj.db.printers ? 'ok' : 'FAIL'));
@@ -264,9 +264,19 @@ module.exports.spooler = function (parent) {
                         obj.send(sid, { action: 'plugin', plugin: 'spooler', method: 'delta', nodeid: command.nodeid, unchanged: true, hash: cached.hash });
                     } else {
                         // pede summary ao agente (e atualiza o cache quando chegar)
-                        obj.agentRequest({ nodeid: command.nodeid, pluginaction: 'summary', params: {}, _deltaFor: sid }, sid, user);
+                        obj.agentRequest({ nodeid: command.nodeid, pluginaction: 'summary', params: {} }, sid, user);
                     }
                     break;
+                }
+
+                // unknown: responde ao frontend (que pode desligar features novas) em vez de só logar
+                default: {
+                    SP_LOG.error('serveraction: unknown pluginaction=' + command.pluginaction, null);
+                    obj.send(sid, {
+                        action: 'plugin', plugin: 'spooler', method: 'agentResult',
+                        op: command.pluginaction, nodeid: command.nodeid || null,
+                        ok: false, error: 'Ação não suportada pelo servidor (server JS desatualizado? reinstale o plugin): ' + command.pluginaction
+                    });
                 }
 
                 // ---- CRUD impressoras ----
@@ -347,9 +357,6 @@ module.exports.spooler = function (parent) {
                         obj.send(sid, { action: 'plugin', plugin: 'spooler', method: 'audit', data: docs });
                     });
                     break;
-
-                default:
-                    SP_LOG.error('serveraction: unknown pluginaction=' + command.pluginaction, null);
             }
         } catch (e) {
             SP_LOG.error('serveraction', e, { pluginaction: command ? command.pluginaction : 'N/A' });
