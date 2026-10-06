@@ -164,6 +164,7 @@ module.exports.spooler = function (parent) {
             switch (command.pluginaction) {
 
                 // ---- inventário / catálogo ----
+                case 'inventory':
                 case 'getPrinters':
                     obj.agentRequest(command, sid, user);
                     break;
