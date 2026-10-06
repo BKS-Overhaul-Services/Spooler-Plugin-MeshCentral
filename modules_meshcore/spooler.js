@@ -420,13 +420,17 @@ var handlers = {
                 "$out = @(); " +
                 "$range = '" + range + "'; " +
                 "if (-not $range) { " +
-                "  $ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '169.254*' -and $_.IPAddress -ne '127.0.0.1' } | Select-Object -First 1).IPAddress; " +
+                // auto-detect: usa a interface da ROTA DEFAULT (ignora vEthernet/Hyper-V/loopback)
+                "  $ips = Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '169.254*' -and $_.IPAddress -ne '127.0.0.1' -and $_.InterfaceAlias -notlike '*vEthernet*' -and $_.InterfaceAlias -notlike '*Loopback*' }; " +
+                "  $defaultIf = (Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1).InterfaceAlias; " +
+                "  $ip = ($ips | Where-Object { $_.InterfaceAlias -eq $defaultIf } | Select-Object -First 1).IPAddress; " +
+                "  if (-not $ip) { $ip = ($ips | Select-Object -First 1).IPAddress } " +
                 "  if ($ip) { $range = ($ip.Split('.')[0..2] -join '.') } " +
                 "}; " +
                 "if ($range) { " +
                 "  $conns = @{}; $tasks = @{}; " +
                 "  foreach ($i in 1..254) { " +
-                "    $t = \"$range.$_\"; " +
+                "    $t = \"$range.$i\"; " +
                 "    $c = New-Object System.Net.Sockets.TcpClient; " +
                 "    $conns[$t] = $c; " +
                 "    $tasks[$t] = $c.ConnectAsync($t, 9100); " +

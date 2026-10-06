@@ -1,5 +1,15 @@
 # Changelog — Spooler Plugin MeshCentral
 
+## 1.1.10 (2026-10-06)
+### Fixed
+- **CRÍTICO — TCP scan nunca achava nada desde a v1.1.8** (`modules_meshcore/spooler.js:discover`): dentro de `foreach ($i in 1..254)`, o gerador de IP usava `$_` (variável de pipeline, vazia em `foreach`) em vez de `$i` → todos os 254 "IPs" viravam `192.168.0.` (inválido) → 1 task faulted, 0 resultados. Fix: `$_` → `$i`.
+- **`Task.WaitAll` abortava quando alguma task faultava**: com 254 sockets, qualquer exceção assíncrona lançava `AggregateException` e o código nunca coletava as portas abertas. Fix: `try/catch` ao redor do `WaitAll` (status `RanToCompletion` é checado task a task depois).
+- **Auto-detect de sub-rede pegava interface errada**: `Get-NetIPAddress | First 1` escolhia vEthernet (Hyper-V) em vez da interface real. Fix: usa a interface da **rota default** (`Get-NetRoute 0.0.0.0/0`), filtrando vEthernet/Loopback/APIPA. Validado em máquina multi-interface: escolhe Wi-Fi `192.168.0.78` corretamente.
+
+### Notes
+- Validação em rede real com HP LaserJet MFP M426dw (192.168.0.182) + segundo dispositivo (192.168.0.12): **2/2 encontrados em ~10s**.
+- Diagnóstico da rede do bench: WSD/SSDP/mDNS não respondem mesmo com probe genérico (multicast bloqueado no AP) — para esses ambientes, TCP corrigido é o caminho. Impressora responde também em IPP 631 (futuro: porta de impressão IPP).
+
 ## 1.1.9 (2026-10-06)
 ### Added
 - **Descoberta sem varredura de rede** (`modules_meshcore/spooler.js:discover`): novo parâmetro `mode` com 3 estratégias:
