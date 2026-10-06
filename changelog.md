@@ -1,5 +1,10 @@
 # Changelog — Spooler Plugin MeshCentral
 
+## 1.1.8 (2026-10-06)
+### Security / Fixed
+- **CRÍTICO — descoberta SNMP causava BSOD em produção** (`modules_meshcore/spooler.js:discover`): o desenho anterior usava `Start-Job` dentro de `1..254` — no PS 5.1 cada job é um **processo `powershell.exe` novo** → 254 processos simultâneos (~50-100MB commit cada) + 254 sockets UDP num instante. Em cliente com driver HP/Epson isso exauriu recursos de kernel e dero **tela azul (bugcheck real)**. Reescrito **sem criar nenhum processo extra**: TCP `ConnectAsync` na porta 9100 (RAW printing — presente em praticamente toda impressora de rede) com 254 sockets async **num único processo PS**, `Task.WaitAll` com teto de 8s, DNS reverso com timeout 1,5s só nos hosts achados. Medido em bench: 1 processo PS, ~4s total, carga desprezível. Timeout por conexão agora limitado a 500-2000ms (era 200-5000ms).
+- **UI do discover** (views): rótulo atualizado de "SNMP" para "procura por porta RAW 9100" — a descoberta não usa mais SNMP.
+
 ## 1.1.7 (2026-10-06)
 ### Fixed
 - **Descoberta SNMP dava timeout (2 min)** (`modules_meshcore/spooler.js:discover`): reverse DNS (`Dns.GetHostEntry`) era síncrono e sem timeout por IP encontrado — em rede AD sem DNS reverso, cada lookup trava 5-10s; com N dispositivos achados, estourava o timeout do `runPS`. Fix: `BeginGetHostEntry` + `WaitOne(1500)` — no máx 1,5s por IP, hostname fica `null` quando não resolve (medido: 2 IPs sem DNS = 4,6s total; antes travava o processo).

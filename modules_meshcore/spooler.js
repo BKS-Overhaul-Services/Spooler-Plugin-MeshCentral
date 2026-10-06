@@ -376,12 +376,18 @@ var handlers = {
         );
     },
 
-    // Descoberta SNMP de impressoras de rede na sub-rede
+    // Descoberta de impressoras de rede na sub-rede.
+    // v1.1.8: SEM Start-Job — a versão anterior criava 254 processos powershell.exe
+    // simultâneos (1 por job), o que exauriu kernel pool numa máquina com driver
+    // HP/Epson e causou BSOD no cliente. Agora: TCP ConnectAsync porta 9100 (RAW),
+    // 254 sockets async num único processo PS, timeout total ~6s, DNS reverso
+    // com teto de 1,5s apenas nos hosts encontrados.
     discover: function (nodeid, reqid, params, res) {
         var range = q(params.range || '');
         var timeout = parseInt(params.timeout || 1000, 10);
-        if (isNaN(timeout) || timeout < 200) timeout = 1000;
-        if (timeout > 5000) timeout = 5000;
+        if (isNaN(timeout) || timeout < 500) timeout = 1000;
+        if (timeout > 2000) timeout = 2000;
+        var waitMs = Math.min(Math.max(timeout * 4, 2000), 8000);
         var script = PS_HEAD +
             "$out = @(); " +
             "$range = '" + range + "'; " +
@@ -390,28 +396,19 @@ var handlers = {
             "  if ($ip) { $range = ($ip.Split('.')[0..2] -join '.') } " +
             "}; " +
             "if ($range) { " +
-            "  $found = @(); " +
-            "  $jobs = @(); " +
-            "  1..254 | ForEach-Object { " +
+            "  $conns = @{}; $tasks = @{}; " +
+            "  foreach ($i in 1..254) { " +
             "    $t = \"$range.$_\"; " +
-            "    $jobs += Start-Job -ScriptBlock { " +
-            "      param($ip, $to) " +
-            "      $udp = New-Object System.Net.Sockets.UdpClient; " +
-            "      $udp.Client.ReceiveTimeout = $to; " +
-            "      $snmp = [byte[]](0x30,0x26,0x02,0x01,0x00,0x04,0x06,0x70,0x75,0x62,0x6C,0x69,0x63,0xA0,0x19,0x02,0x01,0x01,0x02,0x01,0x00,0x02,0x01,0x00,0x30,0x0F,0x30,0x0D,0x06,0x09,0x2B,0x06,0x01,0x02,0x01,0x01,0x03,0x00,0x05,0x00); " +
-            "      try { " +
-            "        $udp.Connect($ip, 161); " +
-            "        [void]$udp.Send($snmp, $snmp.Length); " +
-            "        $ep = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0); " +
-            "        $b = $udp.Receive([ref]$ep); " +
-            "        $udp.Close(); " +
-            "        if ($b.Length -gt 20) { return $ip } " +
-            "      } catch { try { $udp.Close() } catch {} }; " +
-            "      return $null " +
-            "    } -ArgumentList $t, " + timeout + " " +
+            "    $c = New-Object System.Net.Sockets.TcpClient; " +
+            "    $conns[$t] = $c; " +
+            "    $tasks[$t] = $c.ConnectAsync($t, 9100); " +
             "  }; " +
-            "  Wait-Job $jobs -Timeout 8 | Out-Null; " +
-            "  $jobs | ForEach-Object { $r = Receive-Job $_ -ErrorAction SilentlyContinue; if ($r) { $found += $r }; Remove-Job $_ -Force -ErrorAction SilentlyContinue }; " +
+            "  [void][System.Threading.Tasks.Task]::WaitAll(@($tasks.Values), " + waitMs + "); " +
+            "  $found = @(); " +
+            "  foreach ($k in @($conns.Keys)) { " +
+            "    if ($tasks[$k] -and $tasks[$k].Status -eq 'RanToCompletion') { $found += $k }; " +
+            "    try { $conns[$k].Close() } catch {} " +
+            "  }; " +
             "  foreach ($ip2 in $found) { " +
             "    $name2 = $null; " +
             "    $rt = [System.Net.Dns]::BeginGetHostEntry($ip2, $null, $null); " +
