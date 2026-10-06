@@ -1,0 +1,2 @@
+# Spooler-Plugin-MeshCentral
+
