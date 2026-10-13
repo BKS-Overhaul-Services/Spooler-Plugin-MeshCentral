@@ -1,14 +1,14 @@
 {
   "name": "Spooler — Gerenciador de Impressoras",
   "shortName": "spooler",
-  "version": "1.1.16",
+  "version": "1.2.0-beta.1",
   "author": "Misael Filho",
-  "description": "Gerenciamento centralizado de impressoras Windows via MeshCentral: CRUD de impressoras, portas e drivers, descoberta de impressoras (WSD nativo, Active Directory ou varredura TCP), instalação automática em lote, filas de impressão, controle do serviço de spooler, página de teste e acesso ao painel web da impressora.",
+  "description": "Gerenciamento centralizado de impressoras Windows via MeshCentral: CRUD de impressoras, portas e drivers, descoberta de impressoras (WSD nativo, Active Directory ou varredura TCP), instalação automática em lote, filas de impressão, controle do serviço de spooler, página de teste e acesso ao painel web da impressora. v1.2: result-journal — resultados de mutação perdidos em queda de túnel são recuperados e auditados no reconnect.",
   "hasAdminPanel": true,
-  "homepage": "https://github.com/BKS-Overhaul-Services/Spooler-Plugin-MeshCentral",
-  "changelogUrl": "https://raw.githubusercontent.com/BKS-Overhaul-Services/Spooler-Plugin-MeshCentral/main/changelog.md",
-  "configUrl": "https://raw.githubusercontent.com/BKS-Overhaul-Services/Spooler-Plugin-MeshCentral/main/config.json",
-  "downloadUrl": "https://github.com/BKS-Overhaul-Services/Spooler-Plugin-MeshCentral/archive/refs/heads/main.zip",
+  "homepage": "https://github.com/BKS-Overhaul-Services/Spooler-Plugin-MeshCentral/tree/feature/result-journal",
+  "changelogUrl": "https://raw.githubusercontent.com/BKS-Overhaul-Services/Spooler-Plugin-MeshCentral/feature/result-journal/changelog.md",
+  "configUrl": "https://raw.githubusercontent.com/BKS-Overhaul-Services/Spooler-Plugin-MeshCentral/feature/result-journal/config.json",
+  "downloadUrl": "https://github.com/BKS-Overhaul-Services/Spooler-Plugin-MeshCentral/archive/refs/heads/feature/result-journal.zip",
   "repository": {
     "type": "git",
     "url": "https://github.com/BKS-Overhaul-Services/Spooler-Plugin-MeshCentral.git"

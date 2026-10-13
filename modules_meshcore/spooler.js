@@ -20,6 +20,25 @@
 var mesh = null;
 var spDebugFlag = false; // gate de debug agent-side (padrão Tracer: off em produção)
 
+// ------------------- result-journal (v1.2, padrão Tracer/NetAdapter) -------------------
+// Mutações longas (addPrinter com driver stage 10-120s, fila serial) podem atravessar
+// queda de túnel: a mutação executa mas o agentResult se perde → timeout falso no
+// servidor e audit mentindo. Journal write-ahead garante resultado no reconnect.
+var mutJournal = null;
+try {
+    mutJournal = require('na-journal').Create({ plugin: 'spooler', file: 'spooler-mutations.journal', cap: 500 });
+    mutJournal.load(); // sintetiza resultados p/ intents interrompidas por reboot
+} catch (e) { mutJournal = null; }
+
+function mutDrain() {
+    try {
+        if (mutJournal && mesh && typeof mesh.SendCommand === 'function') {
+            mutJournal.drain(function (cmd) { mesh.SendCommand(JSON.stringify(cmd)); });
+        }
+    } catch (e) { sperr('mutDrain: ' + e.message); }
+}
+try { if (mutJournal) mutJournal.startDrainTimer(function (cmd) { if (mesh && mesh.SendCommand) mesh.SendCommand(JSON.stringify(cmd)); }, 60000); } catch (e) {}
+
 function splog(str) {
     if (spDebugFlag !== true) return;
     try {
@@ -311,6 +330,9 @@ var mutQueue = [];      // [{ op, nodeid, reqid, params, res }]
 var mutRunning = false;
 
 function queueMutation(op, nodeid, reqid, params, res) {
+    // write-ahead da INTENÇÃO: se o agente morrer no meio da execução, o boot
+    // sintetiza um resultado de incerteza e o servidor audita a verdade
+    try { if (mutJournal && reqid) mutJournal.intent(reqid, op, params); } catch (e) { sperr('journal intent: ' + e.message); }
     // resposta fase 1: aceito na fila, vai executar
     res({ ok: true, phase: 'started', op: op });
     mutQueue.push({ op: op, nodeid: nodeid, reqid: res._reqid || reqid, params: params, res: res });
@@ -327,6 +349,14 @@ function processQueue() {
     try {
         MUTATION_HANDLERS[item.op](item.nodeid, item.reqid, item.params, function (result) {
             mutRunning = false;
+            // write-ahead do RESULTADO: sobrevive a queda de túnel/conexão
+            try {
+                if (mutJournal && item.reqid) {
+                    mutJournal.result(item.reqid, item.op, result.ok === true, result.error || null,
+                        item.params ? (item.params.name || item.params.ip || item.params.oldName || null) : null);
+                    mutDrain();
+                }
+            } catch (je) { sperr('journal result: ' + je.message); }
             try { item.res(result); } catch (e2) { sperr('queue res: ' + e2.message); }
             processQueue();   // próxima da fila
         });
@@ -955,6 +985,11 @@ function consoleaction(args, rights, sessionid, parent) {
     mesh = parent;
     try {
         if (args.pluginaction === 'agentResult') return 'OK'; // loop guard: nunca processar própria resposta
+        if (args.cmd === 'mutack') { // confirmação do result-journal (servidor processou o batch)
+            try { if (mutJournal) mutJournal.ack(args.ids || []); } catch (e) { sperr('mutack: ' + e.message); }
+            return 'OK';
+        }
+        if (args.cmd === 'mutdrain') { mutDrain(); return 'OK'; } // server pede dreno manual (debug)
         if (!args || args.plugin !== 'spooler') return 'OK';
         // Liga debug agent-side: setDebug via pluginaction auxiliar (padrão Tracer)
         if (args.pluginaction === 'setDebug') {

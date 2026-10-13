@@ -171,10 +171,79 @@ module.exports.spooler = function (parent) {
 
     // ---------------- hooks ----------------
 
+    // v1.2 — dedup de audit para resultados de mutação (normal OU recuperado via journal)
+    obj._mutAudited = {};
+    obj._mutAuditedCap = 5000;
+    obj._markMutAudited = function (reqid) {
+        obj._mutAudited[reqid] = true;
+        var keys = Object.keys(obj._mutAudited);
+        if (keys.length > obj._mutAuditedCap) {
+            keys.slice(0, keys.length - obj._mutAuditedCap).forEach(function (k) { delete obj._mutAudited[k]; });
+        }
+    };
+
+    // v1.2 — resultados de mutação recuperados do journal do agente
+    // (mutação executou mas o agentResult se perdeu numa queda de túnel)
+    // Envelope: { action:'plugin', plugin:'spooler', from:'agent', cmd:'mutresults', results:[{id,op,ok,error,target,ts,synthetic?}] }
+    obj._handleMutResults = function (command, agentConn) {
+        try {
+            var results = Array.isArray(command.results) ? command.results : [];
+            var ackIds = [];
+            var agentNodeid = null;
+            try { agentNodeid = agentConn && agentConn.nodeid; } catch (_) {}
+            results.forEach(function (r) {
+                try {
+                    if (!r || !r.id || !r.op) return;
+                    ackIds.push(r.id); // acka tudo que processou OU dedupou (agente pode apagar)
+                    if (obj._mutAudited[r.id]) return; // já auditado via caminho normal
+                    obj._markMutAudited(r.id);
+                    var p = obj.pending[r.id];
+                    var nodeid, user, sid, op;
+                    if (p) {
+                        // pendente ainda aberto (timeout ainda não estourou) → fecha com o resultado REAL
+                        delete obj.pending[r.id];
+                        nodeid = p.nodeid; user = p.user; sid = p.sid; op = p.op;
+                    } else {
+                        // timeout já respondeu ao browser → auditoria é o que falta
+                        nodeid = agentNodeid; user = null; sid = null; op = r.op;
+                    }
+                    var detail = (r.ok ? 'executado' : (r.error || 'erro')) + ' (recuperado via journal)';
+                    if (r.synthetic) detail += ' [agente reiniciou no meio da mutação]';
+                    obj.audit(user, nodeid, op, r.target || null, detail, r.ok === true);
+                    if (obj.cache[nodeid]) { delete obj.cache[nodeid]; } // mutação → invalida cache delta
+                    if (sid) {
+                        obj.send(sid, {
+                            action: 'plugin', plugin: 'spooler', method: 'agentResult',
+                            op: op, nodeid: nodeid, reqid: r.id,
+                            ok: r.ok === true, result: null, error: r.error || null,
+                            _journal: true
+                        });
+                    }
+                    SP_LOG.info('mutresults reqid=' + r.id + ' op=' + op + ' ok=' + (r.ok === true) + ' pending=' + (p ? 'fechado' : 'não (timeout/sessão)'));
+                } catch (e) {
+                    SP_LOG.error('_handleMutResults:item', e, { id: r && r.id });
+                }
+            });
+            // ack de volta ao agente (JSON string — protocolo servidor→agente)
+            try {
+                if (agentConn && typeof agentConn.send === 'function' && ackIds.length) {
+                    agentConn.send(JSON.stringify({ action: 'plugin', plugin: 'spooler', cmd: 'mutack', ids: ackIds }));
+                }
+            } catch (e) { SP_LOG.error('_handleMutResults:ack', e); }
+        } catch (e) {
+            SP_LOG.error('_handleMutResults', e);
+        }
+    };
+
     // myparent = conexão (frontend ou agente)
     obj.serveraction = function (command, myparent, gp) {
         try {
             if (command.plugin !== 'spooler') return;
+            // v1.2 — journal drain do agente: agentConn NÃO tem .ws.sessionId;
+            // precisa vir antes do branch de sid (mesmo padrão do Tracer/NetAdapter)
+            if (command.from === 'agent' && command.cmd === 'mutresults') {
+                return obj._handleMutResults(command, myparent);
+            }
             var isAgent = false;
             var sid = null;
             try {
@@ -204,6 +273,7 @@ module.exports.spooler = function (parent) {
                     return;
                 }
                 delete obj.pending[reqid];
+                if (p.mut) obj._markMutAudited(reqid); // v1.2: journal drain depois não re-audita
                 SP_LOG.raw('agentResult op=' + (command.op || p.op) + ' ok=' + (command.ok === true) +
                     (command.error ? (' error=' + String(command.error).substring(0, 300)) : '') +
                     ' result=' + JSON.stringify(command.result == null ? null :
