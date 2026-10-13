@@ -16,7 +16,7 @@ var MUTATION_SERVER_OPS = ['addPrinter', 'addFoundPrinter', 'deletePrinter', 're
     'deletePort', 'jobAction', 'clearQueue', 'spoolerAction'];
 
 // Configurável: gate de logs de diagnóstico (error sempre ativo)
-var SP_DEBUG = true;
+var SP_DEBUG = false;
 
 // Categorias de log (padrão Tracer UT_LOG)
 var SP_LOG = {
