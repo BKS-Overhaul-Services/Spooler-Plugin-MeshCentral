@@ -344,7 +344,7 @@ setInterval(function(){
   if(!ms)return;
   if(_ops.inventory)return;             // fetch completo em voo: delta seria redundante
   if(typeof _myHash==='undefined')return;
-  ms.send({action:'plugin',plugin:'spooler',pluginaction:'getDelta',nodeid:nodeid,hash:_myHash});
+  ms.send({action:'plugin',plugin:'spooler',pluginaction:'summary',nodeid:nodeid});
 },7000);
 
 function send(action,params){ if(ms){ ms.send({action:'plugin',plugin:'spooler',pluginaction:action,nodeid:nodeid,params:params||{}}); } else toast('Sem conexão',true); }
@@ -877,7 +877,7 @@ document.addEventListener('DOMContentLoaded',function(){
   _tabLoaded.spooler=true; // init já cobre a 1ª carga do spooler
   // 1ª carga: delta com hash vazio → server sempre devolve o summary completo
   _myHash=null;
-  ms.send({action:'plugin',plugin:'spooler',pluginaction:'getDelta',nodeid:nodeid,hash:null});
+  ms.send({action:'plugin',plugin:'spooler',pluginaction:'summary',nodeid:nodeid});
 });
 </script>
 </body>

@@ -319,25 +319,18 @@ module.exports.spooler = function (parent) {
                     obj.agentRequest(command, sid, user);
                     break;
 
-                // ---- polling leve + granular (v1.1.15) ----
+                // ---- polling leve (v1.2: summary direto, SEM delta) ----
+                // O delta antigo comparava o hash do FRONTEND com o cache do
+                // SERVIDOR — mudanças espontâneas no dispositivo (job novo,
+                // impressora offline) nunca mudavam esse cache → painel congelado.
+                // Padrão Tracer/NetAdapter: on-demand direto, dado sempre vivo.
+                case 'getDelta':
                 case 'summary':
                 case 'getPrinter':
                 case 'getStatus':
+                    if (command.pluginaction === 'getDelta') { command.pluginaction = 'summary'; }
                     obj.agentRequest(command, sid, user);
                     break;
-
-                // ---- delta: cliente diz qual hash tem; server responde só se mudou ----
-                case 'getDelta': {
-                    var cached = obj.cache[command.nodeid];
-                    if (cached && cached.hash === command.hash) {
-                        // nada mudou — resposta ~200 bytes em vez do payload completo
-                        obj.send(sid, { action: 'plugin', plugin: 'spooler', method: 'delta', nodeid: command.nodeid, unchanged: true, hash: cached.hash });
-                    } else {
-                        // pede summary ao agente (e atualiza o cache quando chegar)
-                        obj.agentRequest({ nodeid: command.nodeid, pluginaction: 'summary', params: {} }, sid, user);
-                    }
-                    break;
-                }
 
                 // unknown: responde ao frontend (que pode desligar features novas) em vez de só logar
                 default: {
