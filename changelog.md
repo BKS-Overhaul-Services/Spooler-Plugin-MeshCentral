@@ -1,6 +1,8 @@
 # Changelog — Spooler Plugin MeshCentral
 
 ## Unreleased
+### Changed (plugin-lib)
+- `lib/plugin-acl.js` e `modules_meshcore/na-journal.js` agora são **vendor gerado** de [plugin-lib](../plugin-lib) v0.3.0 (`vendor/plugin-lib/` + `modules_meshcore/na-journal.js` com cabeçalho sha384 — NÃO EDITAR); novo `tests/unit/vendor-integrity.test.js` valida o hash. Fonte: `Plugins/plugin-lib` (edite `src/` e rode `tools/sync.js`).
 ### Fixed (P2-b — XSS nos views)
 - `esc()` de `views/device.handlebars` e `views/admin.handlebars` agora escapa apóstrofo (`'` → `&#39;`) — quebra de string JS em handlers inline deixava de ser neutralizada.
 - Handlers inline com interpolação dinâmica convertidos para `data-act`/`data-key` + delegação (`click`/`change`): linhas de ação da tabela de impressoras, checkboxes da descoberta (AD/WSD/TCP) e ações de jobs/portas. Nenhum `onclick`/`onchange` inline com valor dinâmico resta (pino em `tests/unit/esc-xss.test.js`).
