@@ -43,11 +43,9 @@ function buildMock(opts = {}) {
 function makeDb(audits) {
     return {
         addAudit: function (a) { audits.push(a); },
-        getAudit: function (q, o, cb) { cb(audits); },
-        getAdaptersByNode: function (n, cb) { cb([]); },
-        getAllAdapters: function (cb) { cb([]); },
-        upsertAdapters: function () {},
-        markAbsent: function () {}
+        getAudit: function (q, o, cb) { cb(audits); }
+        // P2-c: stubs do catálogo removido (getAdaptersByNode/getAllAdapters/
+        // upsertAdapters/markAbsent) eliminados — sem call sites no spooler.js
     };
 }
 

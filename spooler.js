@@ -18,6 +18,10 @@ var MUTATION_SERVER_OPS = ['addPrinter', 'addFoundPrinter', 'deletePrinter', 're
 // Configurável: gate de logs de diagnóstico (error sempre ativo)
 var SP_DEBUG = false;
 
+// P0-1 — ACL backport (padrão Tracer v3.5.83, helper compartilhado com
+// NetAdapter/NodeBridge → semente da futura plugin-lib/).
+var SP_ACL = require(__dirname + '/lib/plugin-acl.js');
+
 // Categorias de log (padrão Tracer UT_LOG)
 var SP_LOG = {
     error: function (ctx, err, extra) {
@@ -48,8 +52,30 @@ module.exports.spooler = function (parent) {
     obj.meshServer = parent.parent;
     obj.debug = obj.meshServer.debug;
     obj.exports = ['onDeviceRefreshEnd'];
+    // P0-1 — erro estruturado de volta ao iframe (nada executa no agente).
+    obj._sendPluginError = function (sid, pluginaction, nodeid, error, status) {
+        obj.send(sid, { action: 'plugin', plugin: 'spooler', method: 'pluginError',
+            pluginaction: pluginaction, nodeid: nodeid || null, ok: false,
+            error: error, status: status || 403 });
+    };
+
+    // P0-1 — ACL p/ comandos do frontend: mutações (MUTATION_SERVER_OPS)
+    // exigem DEVICEDETAILS+REMOTECONTROL; leituras, DEVICEDETAILS. Admin
+    // full bypassa (helper). // P2-c: menção a getAllCatalog removida (função morta eliminada)
+    obj._authorizeFrontend = function (command, sid, myparent, cb) {
+        var user = SP_ACL.getUser(myparent, command.userid, obj);
+        var MUT_REQUIRED = SP_ACL.MESHRIGHT_DEVICEDETAILS | SP_ACL.MESHRIGHT_REMOTECONTROL;
+        SP_ACL.checkNodeRights(obj, user, command.nodeid, function (ok, rights) {
+            if (!ok) {
+                SP_LOG.raw('ACL DENIED op=' + command.pluginaction + ' node=' + command.nodeid +
+                    ' user=' + (user ? user._id : 'null') + ' rights=0x' + (rights || 0).toString(16));
+                obj._sendPluginError(sid, command.pluginaction, command.nodeid, 'access denied', 403);
+                return cb(false);
+            }
+            cb(true);
+        }, { requiredBits: (MUTATION_SERVER_OPS.indexOf(command.pluginaction) !== -1) ? MUT_REQUIRED : SP_ACL.MESHRIGHT_DEVICEDETAILS });
+    };
     obj.db = null;
-    obj.mdb = obj.meshServer.db;
     obj.pending = {};   // reqid → { sid, nodeid, op, user, ts }
     obj.cache = {};     // nodeid → { hash, printers[], spooler, ts } (cache delta, v1.1.15)
 
@@ -68,7 +94,8 @@ module.exports.spooler = function (parent) {
             SP_LOG.info('server_startup: init v' + (require('./config.json').version || '?') + ' (getDelta=' + (typeof obj.handleGetDelta) + ')');
             obj.meshServer.pluginHandler.spooler_db = require(__dirname + '/db.js').CreateDB(obj.meshServer);
             obj.db = obj.meshServer.pluginHandler.spooler_db;
-            SP_LOG.info('server_startup: db initialized db=' + (obj.db.printers ? 'ok' : 'FAIL'));
+            // P2-c: era obj.db.printers (coleção de catálogo REMOVIDA — logava FAIL sempre)
+            SP_LOG.info('server_startup: db initialized db=' + (obj.db.audit ? 'ok' : 'FAIL'));
             // limpeza de pendings antigos (>2 min)
             setInterval(function () {
                 var now = Date.now();
@@ -311,7 +338,15 @@ module.exports.spooler = function (parent) {
             // ---------- comandos do frontend ----------
             var user = command.userid || '?';
 
-            switch (command.pluginaction) {
+            // P0-1 — ACL antes de qualquer dispatch (ver _authorizeFrontend).
+            obj._authorizeFrontend(command, sid, myparent, function (allowed) {
+                if (!allowed) return;
+                spDispatch();
+            });
+
+            function spDispatch() {
+
+                switch (command.pluginaction) {
 
                 // ---- inventário / catálogo ----
                 case 'inventory':
@@ -403,23 +438,12 @@ module.exports.spooler = function (parent) {
                     break;
 
                 // ---- dados locais (sem agente) ----
-                case 'getCatalog':
-                    obj.db.getPrintersByNode(command.nodeid, function (docs) {
-                        obj.send(sid, { action: 'plugin', plugin: 'spooler', method: 'catalog', nodeid: command.nodeid, data: docs });
-                    });
-                    break;
-
-                case 'getAllCatalog':
-                    obj.db.getAllPrinters(function (docs) {
-                        obj.send(sid, { action: 'plugin', plugin: 'spooler', method: 'allCatalog', data: docs });
-                    });
-                    break;
-
                 case 'getAudit':
                     obj.db.getAudit({}, { nodeid: command.nodeid, limit: command.limit || 200 }, function (docs) {
                         obj.send(sid, { action: 'plugin', plugin: 'spooler', method: 'audit', data: docs });
                     });
                     break;
+                }
             }
         } catch (e) {
             SP_LOG.error('serveraction', e, { pluginaction: command ? command.pluginaction : 'N/A' });
@@ -431,10 +455,23 @@ module.exports.spooler = function (parent) {
             SP_LOG.raw('handleAdminReq url=' + req.url + ' user=' + (user ? user.name : 'null'));
             if (req.query.user == 1) {
                 // aba do dispositivo
-                return res.render('device', {
-                    nodeid: req.query.nodeid || '',
-                    nodeName: req.query.nodeid ? obj.getNodeName(req.query.nodeid) : 'Desconhecido'
+                // P0-1 — ACL por node antes do render (padrão Tracer :439-475;
+                // não confiar em ?user=1). Fail-closed: 403 sem direito.
+                var aclUser = SP_ACL.getUser({ user: user }, user && user._id);
+                var aclNid = req.query.nodeid;
+                if (!aclNid) { res.sendStatus(400); return; }
+                SP_ACL.checkNodeRights(obj, aclUser, aclNid, function (ok) {
+                    if (!ok) {
+                        SP_LOG.raw('handleAdminReq: 403 device tab node=' + aclNid + ' user=' + (aclUser ? aclUser._id : 'null'));
+                        res.sendStatus(403);
+                        return;
+                    }
+                    res.render('device', {
+                        nodeid: aclNid,
+                        nodeName: obj.getNodeName(aclNid)
+                    });
                 });
+                return;
             }
             if (!user || (user.siteadmin & 0xFFFFFFFF) == 0) {
                 SP_LOG.raw('handleAdminReq: 401 para ' + (user ? user.name : 'anônimo'));

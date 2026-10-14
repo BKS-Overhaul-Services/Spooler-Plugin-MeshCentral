@@ -277,7 +277,7 @@ var _printers=[], _drivers=[], _ports=[], _jobs=[], _found=[], _selected={}, _sp
 var _ops={}; // op → true enquanto pendente
 
 function dlog(){var a=Array.prototype.slice.call(arguments);D.push(new Date().toLocaleTimeString()+' '+a.join(' '));var e=document.getElementById('debug');if(e)e.innerHTML=D.slice(-80).join('\n');}
-function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');} // P2-b: apóstrofo escapado (anti-XSS em onclick/attr)
 function $(id){return document.getElementById(id);}
 function toast(msg,err){var t=$('toast');t.textContent=msg;t.className='toast'+(err?' err':'');t.style.display='block';clearTimeout(t._h);t._h=setTimeout(function(){t.style.display='none';},5000);}
 function closeDlg(id){var d=$(id);if(d.open)d.close();}
@@ -302,6 +302,11 @@ if(ms&&ms.socket){
           if(d.ok===false&&d.error&&d.error.indexOf('não suportada')>=0){_deltaSupported=false;dlog('server antigo: polling delta desligado');toast('Plugin no servidor está desatualizado — reinstale para habilitar cache/delta',true);}
           dlog('WS result', d.op, 'ok='+(d.ok===true));
           handleResult(d);
+          return;
+        }
+        if(d.method==='pluginError'){ // P0-1: ACL negou — feedback em vez de silêncio
+          _deltaSupported=false;dlog('pluginError',d.pluginaction,d.status);
+          toast('Acesso negado a este dispositivo ('+(d.pluginaction||'?')+')',true);
           return;
         }
       }
@@ -460,14 +465,15 @@ function renderPrinters(list){
       +'<td data-prn-status="'+esc(p.name)+'"><span class="badge '+stCls+'">'+esc(stTxt)+'</span></td>'
       +'<td>'+(flags.join(' ')||'—')+'</td>'
       +'<td>'
-      +'<button class="btn btn-sm" onclick="doTestPage(\''+esc(p.name)+'\')">Teste</button> '
-      +(p.default?'':'<button class="btn btn-sm" onclick="doSetDefault(\''+esc(p.name)+'\')">Padrão</button> ')
-      +(p.workOffline?'':'<button class="btn btn-sm" onclick="sendCfg(\''+esc(p.name)+'\',{pausePrinter:1})">Pausar</button> ')
-      +'<button class="btn btn-sm" onclick="sendCfg(\''+esc(p.name)+'\',{resumePrinter:1})">Retomar</button> '
-      +'<button class="btn btn-sm" onclick="showConfig(\''+esc(p.name)+'\')">Config</button> '
-      +'<button class="btn btn-sm" onclick="showRename(\''+esc(p.name)+'\')">Renomear</button> '
-      +(ip?'<button class="btn btn-sm" onclick="showWeb(\''+esc(ip)+'\')">Painel web</button> ':'')
-      +'<button class="btn btn-sm btn-danger" onclick="showDel(\''+esc(p.name)+'\')">Excluir</button>'
+      // P2-b: data-attrs + delegação (sem onclick inline com valores)
+      +'<button class="btn btn-sm" data-act="doTestPage" data-name="'+esc(p.name)+'">Teste</button> '
+      +(p.default?'':'<button class="btn btn-sm" data-act="doSetDefault" data-name="'+esc(p.name)+'">Padrão</button> ')
+      +(p.workOffline?'':'<button class="btn btn-sm" data-act="sendCfg" data-name="'+esc(p.name)+'" data-cfg="pausePrinter">Pausar</button> ')
+      +'<button class="btn btn-sm" data-act="sendCfg" data-name="'+esc(p.name)+'" data-cfg="resumePrinter">Retomar</button> '
+      +'<button class="btn btn-sm" data-act="showConfig" data-name="'+esc(p.name)+'">Config</button> '
+      +'<button class="btn btn-sm" data-act="showRename" data-name="'+esc(p.name)+'">Renomear</button> '
+      +(ip?'<button class="btn btn-sm" data-act="showWeb" data-name="'+esc(ip)+'">Painel web</button> ':'')
+      +'<button class="btn btn-sm btn-danger" data-act="showDel" data-name="'+esc(p.name)+'">Excluir</button>'
       +'</td></tr>';
   });
   h+='</tbody></table>';
@@ -484,6 +490,28 @@ function sendCfg(n,which){
   if(which.pausePrinter){setBusy('pausePrinter',true);send('pausePrinter',{name:n});}
   else if(which.resumePrinter){setBusy('resumePrinter',true);send('resumePrinter',{name:n});}
 }
+
+// P2-b — delegação de clicks (sem onclick inline com valores dinâmicos)
+document.addEventListener('click',function(ev){
+  var b=ev.target&&ev.target.closest?ev.target.closest('button[data-act]'):null;
+  if(!b)return;
+  var act=b.dataset.act,n=b.dataset.name;
+  if(act==='doTestPage')doTestPage(n);
+  else if(act==='doSetDefault')doSetDefault(n);
+  else if(act==='sendCfg'){var c={};c[b.dataset.cfg]=1;sendCfg(n,c);}
+  else if(act==='showConfig')showConfig(n);
+  else if(act==='showRename')showRename(n);
+  else if(act==='showWeb')showWeb(n);
+  else if(act==='showDel')showDel(n);
+  else if(act==='showInstall')showInstall(n);
+  else if(act==='jobAct')jobAct(b.dataset.id,n,b.dataset.jact);
+  else if(act==='delPort')delPort(n);
+});
+// P2-b — delegação de change (checkboxes de seleção da descoberta; sem onchange inline)
+document.addEventListener('change',function(ev){
+  var b=ev.target&&ev.target.closest?ev.target.closest('input[data-act="toggleSel"]'):null;
+  if(b)toggleSel(b.dataset.key);
+});
 
 /* ===== ADD / CONFIG / RENAME / DELETE ===== */
 function fillDriverSelects(){
@@ -597,7 +625,7 @@ function renderFound(list,mode){
     var h='<table class="tbl"><thead><tr><th></th><th>Impressora</th><th>Servidor</th><th>Local</th><th>Driver</th></tr></thead><tbody>';
     _found.forEach(function(f){
       var key=f.unc||(f.host+'\\'+f.name);
-      h+='<tr><td><input type="checkbox" onchange="toggleSel(\''+esc(key)+'\')"></td>'
+      h+='<tr><td><input type="checkbox" data-act="toggleSel" data-key="'+esc(key)+'"></td>' // P2-b: data-attrs (onchange inline com valor dinâmico é vetor XSS)
         +'<td><b>'+esc(f.name||'—')+'</b></td><td>'+esc(f.host||'—')+'</td>'
         +'<td>'+esc(f.location||'—')+'</td><td class="muted">'+esc(f.driver||'—')+'</td></tr>';
     });
@@ -608,7 +636,7 @@ function renderFound(list,mode){
     _found.forEach(function(f,idx){
       var key=String(idx);
       h2+='<div class="foundcard">'
-        +'<input type="checkbox" onchange="toggleSel(\''+esc(key)+'\')">'
+        +'<input type="checkbox" data-act="toggleSel" data-key="'+esc(key)+'">' // P2-b
         +'<div class="ip">'+esc(f.ip)+'</div>'
         +'<div style="flex:1"><div class="muted">'+esc((f.xaddrs||'—').substring(0,90))+'</div></div>'
         +'</div>';
@@ -626,12 +654,12 @@ function renderFound(list,mode){
     if(f.firmware)det.push('firmware: '+f.firmware);
     if(f.hostname)det.push(f.hostname);
     h3+='<div class="foundcard">'
-      +'<input type="checkbox" onchange="toggleSel(\''+esc(key)+'\')" data-ip="'+esc(key)+'">'
+      +'<input type="checkbox" data-act="toggleSel" data-key="'+esc(key)+'">' // P2-b
       +'<div class="ip">'+esc(f.ip)+'</div>'
       +'<div style="flex:1"><div><b>'+esc(model)+'</b>'+(srcBadge?(' <span class="badge">'+esc(srcBadge)+'</span>'):'')+'</div>'
       +(det.length?'<div class="muted">'+esc(det.join(' · '))+'</div>':'')
       +'</div>'
-      +'<button class="btn btn-sm btn-primary" onclick="showInstall(\''+esc(key)+'\')">Instalar</button>'
+      +'<button class="btn btn-sm btn-primary" data-act="showInstall" data-name="'+esc(key)+'">Instalar</button>' // P2-b
       +'</div>';
   });
   $('discResult').innerHTML=h3;
@@ -705,10 +733,11 @@ function renderJobs(list){
       +'<td>'+esc((j.PagesPrinted||j.pagesPrinted||0)+'/'+(j.TotalPages||j.totalPages||'?'))+'</td>'
       +'<td class="muted">'+(j.SubmittedTime?new Date(j.SubmittedTime||j.submittedTime).toLocaleString():'—')+'</td>'
       +'<td>'
-      +'<button class="btn btn-sm" onclick="jobAct('+esc(j.Id||j.id)+',\''+esc(j.PrinterName||j.printerName)+'\',\'pause\')">Pausar</button> '
-      +'<button class="btn btn-sm" onclick="jobAct('+esc(j.Id||j.id)+',\''+esc(j.PrinterName||j.printerName)+'\',\'resume\')">Retomar</button> '
-      +'<button class="btn btn-sm" onclick="jobAct('+esc(j.Id||j.id)+',\''+esc(j.PrinterName||j.printerName)+'\',\'restart\')">Reiniciar</button> '
-      +'<button class="btn btn-sm btn-danger" onclick="jobAct('+esc(j.Id||j.id)+',\''+esc(j.PrinterName||j.printerName)+'\',\'cancel\')">Cancelar</button>'
+      // P2-b: data-attrs (id não vai em atributo dinâmico de JS)
+      +'<button class="btn btn-sm" data-act="jobAct" data-id="'+esc(j.Id||j.id)+'" data-name="'+esc(j.PrinterName||j.printerName)+'" data-jact="pause">Pausar</button> '
+      +'<button class="btn btn-sm" data-act="jobAct" data-id="'+esc(j.Id||j.id)+'" data-name="'+esc(j.PrinterName||j.printerName)+'" data-jact="resume">Retomar</button> '
+      +'<button class="btn btn-sm" data-act="jobAct" data-id="'+esc(j.Id||j.id)+'" data-name="'+esc(j.PrinterName||j.printerName)+'" data-jact="restart">Reiniciar</button> '
+      +'<button class="btn btn-sm btn-danger" data-act="jobAct" data-id="'+esc(j.Id||j.id)+'" data-name="'+esc(j.PrinterName||j.printerName)+'" data-jact="cancel">Cancelar</button>'
       +'</td></tr>';
   });
   h+='</tbody></table>';
@@ -740,7 +769,7 @@ function renderPorts(){
     h+='<tr><td><b>'+esc(p.Name||p.name)+'</b></td><td>'+esc(p.PrinterHostAddress||p.printerHostAddress||'—')+'</td>'
       +'<td>'+esc(p.PortNumber||p.portNumber||'—')+'</td>'
       +'<td>'+(parseInt(p.Protocol||p.protocol,10)===2?'RAW':'LPR')+'</td>'
-      +'<td><button class="btn btn-sm btn-danger" onclick="delPort(\''+esc(p.Name||p.name)+'\')">Excluir</button></td></tr>';
+      +'<td><button class="btn btn-sm btn-danger" data-act="delPort" data-name="'+esc(p.Name||p.name)+'">Excluir</button></td></tr>'; // P2-b
   });
   h+='</tbody></table>';
   $('portList').innerHTML=h;

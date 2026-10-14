@@ -577,8 +577,12 @@ var handlers = {
     pausePrinter: function (nodeid, reqid, params, res) {
         var name = q(params.name);
         if (!name) { res({ ok: false, error: 'name obrigatorio' }); return; }
+        if (name.indexOf('"') !== -1) { res({ ok: false, error: 'nome com aspas duplas nao suportado' }); return; }
         runText(
-            "$p = Get-CimInstance Win32_Printer -Filter \"Name='" + name + "'\"; " +
+            // P0-2 — script PS em aspas SIMPLES (nada de contexto double-quote);
+            // valor WQL em aspas duplas WQL; q() duplica ' → impossível fechar
+            // o literal WQL; " rejeitado acima → impossível fechar o WQL.
+            "$p = Get-CimInstance Win32_Printer -Filter 'Name=\"" + name + "\"'; " +
             "if (-not $p) { Write-Output 'ERR:printer not found'; exit } " +
             "$p | Invoke-CimMethod -MethodName Pause | Out-Null; Write-Output 'OK'",
             res
@@ -588,8 +592,9 @@ var handlers = {
     resumePrinter: function (nodeid, reqid, params, res) {
         var name = q(params.name);
         if (!name) { res({ ok: false, error: 'name obrigatorio' }); return; }
+        if (name.indexOf('"') !== -1) { res({ ok: false, error: 'nome com aspas duplas nao suportado' }); return; }
         runText(
-            "$p = Get-CimInstance Win32_Printer -Filter \"Name='" + name + "'\"; " +
+            "$p = Get-CimInstance Win32_Printer -Filter 'Name=\"" + name + "\"'; " +
             "if (-not $p) { Write-Output 'ERR:printer not found'; exit } " +
             "$p | Invoke-CimMethod -MethodName Resume | Out-Null; Write-Output 'OK'",
             res
@@ -599,10 +604,11 @@ var handlers = {
     testPage: function (nodeid, reqid, params, res) {
         var name = q(params.name);
         if (!name) { res({ ok: false, error: 'name obrigatorio' }); return; }
+        if (name.indexOf('"') !== -1) { res({ ok: false, error: 'nome com aspas duplas nao suportado' }); return; }
         runText(
             "$ErrorActionPreference='Stop'; " +
             "try { " +
-            "  $p = Get-CimInstance Win32_Printer -Filter \"Name='" + name + "'\" -ErrorAction Stop; " +
+            "  $p = Get-CimInstance Win32_Printer -Filter 'Name=\"" + name + "\"' -ErrorAction Stop; " +
             "  $p | Invoke-CimMethod -MethodName PrintTestPage -ErrorAction Stop | Out-Null; " +
             "  Write-Output 'OK' " +
             "} catch { Write-Output ('ERR:' + $_.Exception.Message) }",

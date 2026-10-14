@@ -1,5 +1,13 @@
 # Changelog — Spooler Plugin MeshCentral
 
+## Unreleased
+### Fixed (P2-b — XSS nos views)
+- `esc()` de `views/device.handlebars` e `views/admin.handlebars` agora escapa apóstrofo (`'` → `&#39;`) — quebra de string JS em handlers inline deixava de ser neutralizada.
+- Handlers inline com interpolação dinâmica convertidos para `data-act`/`data-key` + delegação (`click`/`change`): linhas de ação da tabela de impressoras, checkboxes da descoberta (AD/WSD/TCP) e ações de jobs/portas. Nenhum `onclick`/`onchange` inline com valor dinâmico resta (pino em `tests/unit/esc-xss.test.js`).
+### Removed (P2-c — features mortas)
+- Coleção NeDB `printers` e funções de catálogo (`upsertPrinters`/`markAbsent`/`removeNodePrinters`/`getAllCatalog`) removidas de `db.js`/`spooler.js` — nunca populadas, sem call sites. `plugin-spooler-printers.db` pode ser apagado do datapath.
+- Painel "Catálogo de impressoras" do `views/admin.handlebars` removido; `_catalog` eliminado; log de startup não referencia mais `obj.db.printers` (logava FAIL sempre).
+
 ## 1.1.16 (2026-10-06)
 ### Fixed
 - **Deploy parcial detectado em produção**: views novas (frontend manda `getDelta`) com server JS antigo → spam de `unknown pluginaction=getDelta`. Causa: update pela UI falhou (`Error downloading plugin: Timed out`) — views são lidas do disco a cada request, mas o server JS só troca com reload pós-arquivo-novo. Correções de resiliência: (1) server responde erro explícito "não suportada" ao frontend em ação desconhecida (antes só logava); (2) frontend desliga o polling delta ao receber esse erro e mostra toast "Plugin no servidor está desatualizado"; (3) startup loga a versão do config.json (diagnóstico imediato de deploy parcial).
