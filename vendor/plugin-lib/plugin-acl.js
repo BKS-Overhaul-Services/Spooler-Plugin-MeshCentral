@@ -1,3 +1,7 @@
+// ARQUIVO GERADO por plugin-lib v0.3.0 — NÃO EDITAR.
+// sha384: 64d9a09e4545392cc4b7f7a081b10d1bf5d9e829d808dcd1a0b8f153447eaae91f2b94c380df4c066b7908407795a9ce
+// Fonte: repo Plugins/plugin-lib (edite src/ e rode tools/sync.js).
+
 /**
  * plugin-acl.js — Helper de ACL compartilhado (semente da futura plugin-lib/)
  * =============================================================================

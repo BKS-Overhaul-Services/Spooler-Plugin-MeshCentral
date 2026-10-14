@@ -1,8 +1,13 @@
+// ARQUIVO GERADO por plugin-lib v0.3.0 — NÃO EDITAR.
+// sha384: 5688d5f3abb67ca97e726c21cfc73cf07bb7ca76c94534e2ffe9ab53f383e82594a66d5b17e554236c432fa78f14cdd7
+// Fonte: repo Plugins/plugin-lib (edite src/ e rode tools/sync.js).
+
 /**
- * na-journal.js — Journal de resultados de mutação (store-and-forward)
+ * journal.js — Journal de resultados de mutação (store-and-forward) — FONTE ÚNICA plugin-lib
  * =============================================================================
- * Extraído do padrão do session-tracer (plugin Tracer v4). Usado pelo NetAdapter
- * (e reaproveitável pelo Spooler) para o problema: mutações que DERRUBAM a conexão
+ * Fonte única (v0.3.0), extraída do na-journal.js do NetAdapter (procedência:
+ * padrão session-tracer do plugin Tracer v4). Consumidores: NetAdapter
+ * (modules_meshcore/na-journal.js → vendor), Spooler (futuro). Problema: mutações que DERRUBAM a conexão
  * do agente (disableAdapter, setIp, setMac...) executam com sucesso no dispositivo,
  * mas o agentResult nunca chega → servidor responde TIMEOUT e o audit registra
  * um "timeout" falso.
@@ -27,7 +32,7 @@
 
 module.exports.Create = function (opts) {
     opts = opts || {};
-    var FILE = opts.file || 'netadapter-mutations.journal';
+    var FILE = opts.file || 'mutations.journal';
     var CAP = opts.cap || 500;
 
     var fs = null; try { fs = require('fs'); } catch (e) {}
@@ -137,7 +142,7 @@ module.exports.Create = function (opts) {
         var pend = obj.pending();
         if (!pend.length || typeof sendFn !== 'function') return [];
         var cmd = {
-            action: 'plugin', plugin: opts.plugin || 'netadapter', from: 'agent',
+            action: 'plugin', plugin: opts.plugin || 'plugin', from: 'agent',
             cmd: 'mutresults', results: pend
         };
         try {

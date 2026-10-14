@@ -20,7 +20,7 @@ var SP_DEBUG = false;
 
 // P0-1 — ACL backport (padrão Tracer v3.5.83, helper compartilhado com
 // NetAdapter/NodeBridge → semente da futura plugin-lib/).
-var SP_ACL = require(__dirname + '/lib/plugin-acl.js');
+var SP_ACL = require(__dirname + '/vendor/plugin-lib/plugin-acl.js'); // plugin-lib v0.3.0 (fonte única; vendor gerado — NÃO EDITAR)
 
 // Categorias de log (padrão Tracer UT_LOG)
 var SP_LOG = {
