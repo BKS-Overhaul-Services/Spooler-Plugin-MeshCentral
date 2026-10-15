@@ -514,8 +514,15 @@ document.addEventListener('change',function(ev){
 });
 
 /* ===== ADD / CONFIG / RENAME / DELETE ===== */
+// Drivers v4 (Type4) não suportam instalação via porta TCP/IP padrão — marcados e
+// desabilitados nos dialogs de instalação (dlgAdd/dlgInstall); cfgDriver permanece
+// livre (trocar driver de impressora existente não cria porta).
 function fillDriverSelects(){
-  var opts='<option value="">— selecione —</option>'+_drivers.map(function(d){return '<option value="'+esc(d.Name||d.name)+'">'+esc(d.Name||d.name)+'</option>';}).join('');
+  function drvMajor(d){var m=d.MajorVersion!=null?parseInt(d.MajorVersion,10):null;if(m==null||isNaN(m)){var dv=String(d.DriverVersion||'');var p=dv.split('.');m=p.length?parseInt(p[0],10):NaN;}return isNaN(m)?null:m;}
+  var opts='<option value="">— selecione —</option>'+_drivers.map(function(d){
+    var isV4=drvMajor(d)===4;
+    return '<option value="'+esc(d.Name||d.name)+'"'+(isV4?' disabled title="Driver v4 (Type4) não suporta instalação via porta TCP/IP — use um driver v3 do fabricante"':'')+'>'+esc(d.Name||d.name)+(isV4?' (v4 — não suportado p/ TCP/IP)':'')+'</option>';
+  }).join('');
   ['addDriver','instDriver','cfgDriver'].forEach(function(id){var s=$(id);var c=s.value;s.innerHTML=opts;});
 }
 function fillPortSelects(){
@@ -535,6 +542,8 @@ function dlgBusy(dlgId,btnId,statusId,busy,msg){
 function doAddPrinter(){
   var name=$('addName').value.trim(),ip=$('addIp').value.trim(),driver=$('addDriver').value,port=parseInt($('addPort').value,10)||9100;
   if(!name||!ip||!driver){toast('Preencha nome, IP e driver',true);return;}
+  var dd=_drivers.find(function(d){return (d.Name||d.name)===driver;});
+  if(dd&&drvMajor(dd)===4){toast('Driver v4 (Type4) não suporta instalação via porta TCP/IP — escolha um driver v3 do fabricante',true);return;}
   dlgBusy('dlgAdd','addBtn','addStatus',true,'Criando porta e instalando impressora (pode levar até 60s — driver sendo preparado)...');
   send('addPrinter',{name:name,ip:ip,driver:driver,port:port,shared:$('addShared').checked,setDefault:$('addDefault').checked});
 }
@@ -689,6 +698,8 @@ function showInstall(ip){
 function doInstallFound(){
   var ip=$('instIp').value,name=$('instName').value.trim(),driver=$('instDriver').value,port=parseInt($('instPort').value,10)||9100;
   if(!name||!driver){toast('Preencha nome e driver',true);return;}
+  var dd=_drivers.find(function(d){return (d.Name||d.name)===driver;});
+  if(dd&&drvMajor(dd)===4){toast('Driver v4 (Type4) não suporta instalação via porta TCP/IP — escolha um driver v3 do fabricante',true);return;}
   dlgBusy('dlgInstall','instBtn','instStatus',true,'Instalando "'+esc(name)+'" (o Windows prepara o driver — pode levar até 60s)...');
   send('addFoundPrinter',{ip:ip,name:name,driver:driver,port:port});
 }
