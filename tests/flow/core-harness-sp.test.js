@@ -90,6 +90,50 @@ test('PORT SP: 2 admins mesma operação no mesmo node — pendings independente
     h.stop();
 });
 
+test('PORT SP: guard do processQueue — op mutante sem handler responde erro explícito, sem exceção (deploy parcial v1.1.14)', async () => {
+    // Repro do incidente de produção (log 06/10 19:00: 'queue exec error: MUTATION_HANDLERS[item.op]
+    // is not a function'): o consoleaction REAL do agente com o mapa de handlers esvaziado agora
+    // responde done ok=false com motivo acionável — e NÃO lança.
+    const H_AGENT = path.resolve(__dirname, '../../modules_meshcore/spooler.js');
+    const fs = require('fs');
+    const os = require('os');
+    const src = fs.readFileSync(H_AGENT, 'utf8');
+    const broken = src.replace(/\.forEach\(function \(op\) \{ MUTATION_HANDLERS\[op\] = handlers\[op\]; \}\);/, '');
+    assert.notEqual(broken, src, 'forEach do mapa encontrado para simular módulo v1.1.14');
+    const tmpf = path.join(os.tmpdir(), 'sp-broken-guard-' + Date.now() + '.js');
+    fs.writeFileSync(tmpf, broken);
+    try {
+        delete require.cache[path.resolve(tmpf)];
+        const SP = require(path.resolve(tmpf));
+        const replies = [];
+        const fakeMesh = { SendCommand: function (raw) { replies.push(JSON.parse(raw)); } };
+        assert.doesNotThrow(function () {
+            SP.consoleaction({ action: 'plugin', plugin: 'spooler', pluginaction: 'addPrinter', reqid: 'guard-1', params: { name: 'X', driver: 'D', ip: '1.2.3.4' } }, null, null, fakeMesh);
+        }, 'guard lançou em vez de responder');
+        await pollUntil(() => replies.length >= 2, 3000);
+        const done = replies.find(function (r) { return r.phase === 'done'; });
+        assert.ok(done, 'reply done presente');
+        assert.equal(done.ok, false);
+        assert.ok(/sem handler no agente/.test(done.error), 'erro acionável: ' + done.error);
+    } finally { fs.unlinkSync(tmpf); }
+});
+
+test('PORT SP: driver v4 — validação na UI (fonte) e erro traduzido no agente', async () => {
+    // (1) Fonte da UI: fillDriverSelects marca v4 desabilitada e doAddPrinter/doInstallFound
+    // validam MajorVersion antes do send.
+    const fs = require('fs');
+    const view = fs.readFileSync(path.resolve(__dirname, '../../views/device.handlebars'), 'utf8');
+    assert.ok(view.includes("(v4 — não suportado p/ TCP/IP)"), 'sufixo legível na option');
+    assert.ok(/drvMajor\(dd\)===4\)\{toast\('Driver v4/.test(view), 'validação MajorVersion antes do send (doAddPrinter/doInstallFound)');
+    // (2) Agente: addPrinter com driver inexistente mantém o erro CIM (não falso-positivo v4);
+    // a tradução v4 exige o padrao 'driver invalid/not found' — testado via regex da fonte.
+    const agentSrc = fs.readFileSync(path.resolve(__dirname, '../../modules_meshcore/spooler.js'), 'utf8');
+    assert.ok(agentSrc.includes("ERR_V4DRIVER:"), 'tradução v4 presente no addPrinter');
+    assert.ok(/Driver v4 não suporta instalação via porta TCP\/IP nesta configuração/.test(agentSrc), 'mensagem acionável');
+    // (3) listDrivers expõe MajorVersion para a UI decidir (spooler.js listDrivers).
+    assert.ok(/Select-Object Name, Manufacturer, MajorVersion, DriverVersion/.test(agentSrc), 'MajorVersion no listDrivers');
+});
+
 function pollUntil(cond, timeoutMs) {
     const start = Date.now();
     return new Promise(function (resolve) {
