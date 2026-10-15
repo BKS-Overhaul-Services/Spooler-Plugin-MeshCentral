@@ -344,6 +344,15 @@ function processQueue() {
     if (mutRunning) return;
     var item = mutQueue.shift();
     if (!item) return;
+    // P3 — handler ausente (deploy parcial do módulo agente, ex.: v1.1.14 com mapa vazio):
+    // responde erro explícito em vez de lançar — o frontend recebe o motivo real e não
+    // fica travado no 'Na fila do agente...' até o timeout do servidor.
+    if (typeof MUTATION_HANDLERS[item.op] !== 'function') {
+        sperr('queue: op sem handler registrado: ' + item.op + ' (módulo agente antigo? reinstale o plugin)');
+        try { item.res({ ok: false, error: 'op sem handler no agente (módulo antigo? reinstale o plugin): ' + item.op }); } catch (e2) {}
+        processQueue();
+        return;
+    }
     mutRunning = true;
     splog('queue: exec ' + item.op + ' (restantes=' + mutQueue.length + ')');
     try {
@@ -502,8 +511,19 @@ var handlers = {
             "  if (-not $ok2) { Write-Output 'ERR:fila nao ficou visivel apos Add (driver stage?)'; exit } " +
             "  if (" + def + ") { (New-Object -ComObject WScript.Network).SetDefaultPrinter('" + name + "') } " +
             "  Write-Output ('OK:' + '" + name + "') " +
-            "} catch { Write-Output ('ERR:' + $_.Exception.Message) }",
-            function (r) { if (r.ok) r.result = { name: params.name, portName: portName }; res(r); }
+            "} catch { " +
+            // Driver v4 (Type4) não suporta porta TCP/IP padrão — mensagem acionável em vez do
+            // erro CIM opaco ('The specified driver is invalid' / PrinterDriverNotFoundException)
+            "  $m = $_.Exception.Message; " +
+            "  if ($m -match 'driver.*(invalid|not (found|valid))' -or $_.Exception.GetType().Name -eq 'PrinterDriverNotFoundException') { " +
+            "    $m = 'ERR_V4DRIVER: Driver v4 nao suporta instalacao via porta TCP/IP nesta configuracao - use um driver Type3/v3 do fabricante' " +
+            "  } " +
+            "  Write-Output ('ERR:' + $m) }",
+            function (r) {
+                if (r.ok) { r.result = { name: params.name, portName: portName }; res(r); return; }
+                if (String(r.error || '').indexOf('ERR_V4DRIVER:') === 0) r.error = 'Driver v4 não suporta instalação via porta TCP/IP nesta configuração — use um driver Type3/v3 do fabricante';
+                res(r);
+            }
         );
     },
 
@@ -619,7 +639,10 @@ var handlers = {
     // Drivers instalados
     listDrivers: function (nodeid, reqid, params, res) {
         workerRun(
-                        "$out = @(Get-PrinterDriver | Select-Object Name, Manufacturer, DriverVersion, PrinterEnvironment, Architecture)",
+                        // MajorVersion: 3=Type3 (v3, porta TCP/IP OK), 4=Type4/v4 — v4 NÃO suporta
+                        // instalação via porta TCP/IP padrão (só V4 driver model / IPP); usado pela
+                        // UI p/ marcar e bloquear a opção nos dialogs de instalação.
+                        "$out = @(Get-PrinterDriver | Select-Object Name, Manufacturer, MajorVersion, DriverVersion, PrinterEnvironment, Architecture)",
             res
         );
     },
