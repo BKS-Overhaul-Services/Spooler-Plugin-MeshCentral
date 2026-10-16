@@ -671,7 +671,7 @@ var handlers = {
     },
 
     // Descoberta de impressoras SEM varredura de rede (v1.1.9).
-    // Modos nativos (mode=wsd|ad|tcp|mdns):
+    // Modos nativos (mode=wsd|ad|tcp|mdns|hidden):
     //  - wsd: WS-Discovery (mesmo protocolo do wizard "Adicionar impressora" do
     //    Windows) — 1 pacote multicast UDP 3702, respostas em ~2-10s. Zero flood.
     //  - ad: printQueue publicados no Active Directory via LDAP — impressoras
@@ -958,6 +958,43 @@ var handlers = {
                 "  } " +
                 "} catch { $out['@error'] = [pscustomobject]@{ error=('mDNS: ' + $_.Exception.Message); source=@('mdns'); hidden=$false } } " +
                 "$__json = '[]'; if ($out.Count) { $__json = @($out.Values) | ConvertTo-Json -Depth 4 -Compress } " +
+                "Write-Output ('" + SENTINEL + "' + $__json);";
+        } else if (mode === 'hidden') {
+            // F3 — impressoras "ocultas" do inventário:
+            //  (a) conexões per-user (HKU\<sid>\Printers\Connections): o agente
+            //      roda como SYSTEM e o Get-Printer de sessão de serviço não
+            //      lista conexões de usuário; o HKEY_USERS lista as de todos os
+            //      perfis CARREGADOS (usuários logados), com SID.
+            //  (b) filas publicadas no AD (Get-Printer: Published=true).
+            // Cross-ref com Get-Printer local → visibleInInventory. Fontes
+            // separadas de tcp/wsd/mdns — orquestração (mode=auto) fica pra F4.
+            script = PS_HEAD +
+                "$out = @(); " +
+                "$gp = @(Get-Printer); " +
+                "$vis = @{}; foreach ($p in $gp) { $vis[$p.Name] = $p } " +
+                // (a) conexões per-user
+                "try { " +
+                "  $users = [Microsoft.Win32.RegistryKey]::OpenRemoteBaseKey('Users', ''); " +
+                "  foreach ($sid in $users.GetSubKeyNames()) { " +
+                "    if ($sid -notmatch '^S-1-5-21-' -or $sid -match '_Classes$') { continue }; " +
+                "    $ck = $null; try { $ck = $users.OpenSubKey($sid + '\\Printers\\Connections') } catch {}; " +
+                "    if (-not $ck) { continue }; " +
+                "    foreach ($cn in $ck.GetSubKeyNames()) { " +
+                "      $parts = $cn.Split(','); $srv = $parts[2]; $prn = $parts[3]; " +
+                "      if (-not $prn) { continue }; " +
+                "      $full = '\\\\' + $srv + '\\' + $prn; " +
+                "      $g = $vis[$full]; " +
+                "      $out += [pscustomobject]@{ name=$prn; fullName=$full; server=$srv; sid=$sid; type='connection'; hidden=$true; hiddenReason='conexao per-user'; visibleInInventory=[bool]$g; driver=$g.DriverName; port=$g.PortName; ip=$null; model=$null; source=@('hidden-hku') } " +
+                "    } " +
+                "  } " +
+                "} catch { $out += [pscustomobject]@{ error=('HKU: ' + $_.Exception.Message); source=@('hidden-hku'); hidden=$false } } " +
+                // (b) filas publicadas no AD
+                "try { " +
+                "  foreach ($p in @($gp | Where-Object { $_.Published })) { " +
+                "    $out += [pscustomobject]@{ name=$p.Name; fullName=$p.Name; server=$p.ComputerName; sid=$null; type='published'; hidden=$true; hiddenReason='publicada no AD'; visibleInInventory=$true; driver=$p.DriverName; port=$p.PortName; ip=$null; model=$null; source=@('hidden-published') } " +
+                "  } " +
+                "} catch { $out += [pscustomobject]@{ error=('Published: ' + $_.Exception.Message); source=@('hidden-published'); hidden=$false } } " +
+                "$__json = '[]'; if ($out) { $__json = @($out) | ConvertTo-Json -Depth 3 -Compress } " +
                 "Write-Output ('" + SENTINEL + "' + $__json);";
         } else {
             // wsd (padrão): WS-Discovery Probe via UdpClient, sem flood e sem processo extra
