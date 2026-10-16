@@ -1,6 +1,10 @@
 # Changelog — Spooler Plugin MeshCentral
 
 ## Unreleased
+### Added (F5 — UI da descoberta)
+- **Seletor com os novos modos** (`views/device.handlebars`): "Ocultas — conexões per-user e filas publicadas" e "Automático — todas as fontes (~90s)" (range/timeout visíveis também no auto); hints e mensagens de carregamento/vazio por modo.
+- **Cards unificados** (`foundCard`): badge por fonte — `IPP/PJL/LPD/HTTP` (tcp), `PER-USER`/`AD` (hidden) —, `hiddenReason` + flag "NÃO visível no inventário", `ports[]`, `fila (rp)` (TXT mDNS) e firmware. Conexões per-user/filas publicadas são **informativos** (já instaladas na máquina): sem checkbox/botão de instalar.
+- **Auto**: banner "Parcial (N): …" com os `warnings[]` do orquestrador; chave de item `discKey` (ip → fullName → name) para seleção/instalação; pré-preenchimento de porta por host no diálogo e no lote (9100 preferida).
 ### Added (F4 — modo auto)
 - **`mode=auto` — orquestrador de descoberta** (`modules_meshcore/spooler.js:discover`): executa **hidden → tcp → wsd → mdns** em sequência, cada um pelo handler já existente (fontes separadas de F3 preservadas), com orçamento TOTAL de 90s — modo sem tempo restante sai com warning e não executa (`partial:true`); enriquecimento tcp recebe o saldo do orçamento (5-30s, via novo `params.budget` clamped). Merge com dedupe (`ip` para tcp/wsd, `fullName` para hidden, nome de instância para mdns) e **união de `source[]`** quando a mesma impressora aparece em 2 modos. Resposta carrega `partial` + `warnings[]` — novo passthrough no servidor (`spooler.js` agentResult) e no wrapper read-path do agente, testado em `tests/flow/auto-passthrough.test.js`. Validado ao vivo (bench 2026-10-16, rede real, ~105s de parede incl. wsd/mdns vazios): **4 resultados** — HP M426dw + EPSON L5590 (tcp/IPP) + 2 conexões per-user (hidden), `warnings=[]` propagado ao browser.
 ### Added (F3 — impressoras ocultas)

@@ -104,6 +104,8 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
         <option value="wsd">WSD — nativo (como o wizard do Windows)</option>
         <option value="ad">Active Directory — impressoras do domínio</option>
         <option value="tcp">Varredura TCP — 9100 + 631 + 515 (universal)</option>
+        <option value="hidden">Ocultas — conexões per-user e filas publicadas</option>
+        <option value="auto">Automático — todas as fontes (~90s)</option>
       </select>
       <input type="text" id="discRange" placeholder="range p/ TCP: 192.168.0" style="width:200px;display:none">
       <select id="discTimeout" style="display:none"><option value="1000">Timeout 1s</option><option value="2000">2s</option><option value="500">0.5s</option></select>
@@ -406,7 +408,7 @@ function handleResult(d){
     case 'pausePrinter': case 'resumePrinter': toast('Operação aplicada'); refreshInventory(); break;
     case 'testPage': toast('Página de teste enviada'); break;
     case 'deletePort': toast('Porta excluída'); loadPorts(); break;
-    case 'discover': renderFound(r||[], d.mode||_discMode); break;
+    case 'discover': window._autoWarnings=(d.mode==='auto'&&d.warnings)?d.warnings:[]; renderFound(r||[], d.mode||_discMode); break;
     case 'getJobs': renderJobs(r||[]); break;
     case 'jobAction': toast('Job atualizado'); loadJobs(); break;
     case 'clearQueue': toast('Fila limpa'); loadJobs(); break;
@@ -602,17 +604,19 @@ var _discMode='wsd';
 function showDiscoverDlg(){switchTab('discover');}
 function discModeChanged(){
   _discMode=$('discMode').value;
-  var isTcp=(_discMode==='tcp');
+  var isTcp=(_discMode==='tcp'||_discMode==='auto');
   $('discRange').style.display=isTcp?'':'none';
   $('discTimeout').style.display=isTcp?'':'none';
   var hints={wsd:'WSD: multicast local (~5s). Impressoras precisam estar ligadas e na mesma VLAN.',
     ad:'AD: lista impressoras publicadas no domínio (print servers). Não precisa varredura.',
-    tcp:'TCP: varre 9100+631+515 e identifica via IPP/PJL/LPD/HTTP. Funciona mesmo com multicast bloqueado no AP.'};
+    tcp:'TCP: varre 9100+631+515 e identifica via IPP/PJL/LPD/HTTP. Funciona mesmo com multicast bloqueado no AP.',
+    hidden:'Ocultas: conexões per-user (HKU) e filas publicadas no AD. Não varre a rede.',
+    auto:'Automático: ocultas → TCP 3 portas → WSD → mDNS, orçamento de 90s (partial:true se algo não couber).'};
   $('discHint').textContent=hints[_discMode]||'';
 }
 function startDiscover(){
   var mode=_discMode;
-  var msg={wsd:'Procurando impressoras via WSD (até ~12s)...',ad:'Consultando Active Directory...',tcp:'Varrendo sub-rede (9100+631+515; identificação IPP/PJL/LPD — ~20-40s)...'};
+  var msg={wsd:'Procurando impressoras via WSD (até ~12s)...',ad:'Consultando Active Directory...',tcp:'Varrendo sub-rede (9100+631+515; identificação IPP/PJL/LPD — ~20-40s)...',hidden:'Procurando conexões per-user e filas publicadas...',auto:'Descoberta automática (ocultas → TCP → WSD → mDNS; até ~90s)...'};
   $('discResult').innerHTML='<div class="loading">'+(msg[mode]||'Procurando...')+'</div>';
   $('discInfo').textContent='';
   $('installSelBtn').disabled=true;
@@ -622,14 +626,21 @@ function startDiscover(){
 }
 function renderFound(list,mode){
   _found=list||[];
+  var _autoWarnings=(window._autoWarnings==null?[]:window._autoWarnings); // setado pelo handler do send
   var errs=_found.filter(function(f){return f.error;});
   if(errs.length){$('discResult').innerHTML='<div class="empty">Erro: '+esc(errs[0].error)+'</div>';return;}
   if(!_found.length){
     var empty={wsd:'Nenhuma impressora respondeu ao WSD. Verifique se estão ligadas, na mesma VLAN (multicast 239.255.255.250:3702 liberado) e com WSD habilitado. Alternativa: tente "Active Directory" ou "TCP 9100".',
       ad:'Nenhuma printQueue no Active Directory (nenhum print server publicou impressoras no domínio). Tente "WSD" ou "TCP 9100".',
-      tcp:'Nenhum host com portas 9100/631/515 abertas na sub-rede.'};
+      tcp:'Nenhum host com portas 9100/631/515 abertas na sub-rede.',
+      hidden:'Nenhuma conexão per-user ou fila publicada encontrada.',
+      auto:'Nada encontrado em nenhuma fonte (TCP/WSD/mDNS/ocultas).'};
     $('discResult').innerHTML='<div class="empty">'+esc(empty[mode]||'Nada encontrado.')+'</div>';return;}
   $('discInfo').textContent=_found.length+' encontrada(s)';
+  var _banner='';
+  if(mode==='auto'&&_autoWarnings.length){
+    _banner='<div class="empty" style="margin-bottom:8px">Parcial ('+_autoWarnings.length+'): '+esc(_autoWarnings.join(' · '))+'</div>';
+  }
   if(mode==='ad'){
     var h='<table class="tbl"><thead><tr><th></th><th>Impressora</th><th>Servidor</th><th>Local</th><th>Driver</th></tr></thead><tbody>';
     _found.forEach(function(f){
@@ -654,25 +665,42 @@ function renderFound(list,mode){
     return;
   }
   var h3='';
-  _found.forEach(function(f){
-    var key=f.ip;
-    var model=bestPrinterName(f);
-    var srcBadge={ipp:'IPP','ipp-name':'IPP',pjl:'PJL',lpd:'LPD',http:'HTTP'}[f.modelSource]||'';
-    var det=[];
-    if(f.ports&&f.ports.length)det.push('portas: '+f.ports.join(', '));
-    if(f.printerName&&!(/^(ipp|ipps|print|ipp\/print)$/i).test(f.printerName))det.push('fila: '+f.printerName);
-    if(f.firmware)det.push('firmware: '+f.firmware);
-    if(f.hostname)det.push(f.hostname);
-    h3+='<div class="foundcard">'
-      +'<input type="checkbox" data-act="toggleSel" data-key="'+esc(key)+'">' // P2-b
-      +'<div class="ip">'+esc(f.ip)+'</div>'
-      +'<div style="flex:1"><div><b>'+esc(model)+'</b>'+(srcBadge?(' <span class="badge">'+esc(srcBadge)+'</span>'):'')+'</div>'
-      +(det.length?'<div class="muted">'+esc(det.join(' · '))+'</div>':'')
-      +'</div>'
-      +'<button class="btn btn-sm btn-primary" data-act="showInstall" data-name="'+esc(key)+'">Instalar</button>' // P2-b
-      +'</div>';
+  _found.forEach(function(f,idx){
+    h3+=foundCard(f,idx);
   });
-  $('discResult').innerHTML=h3;
+  $('discResult').innerHTML=_banner+h3;
+}
+function discKey(f,idx){
+  // chave de seleção/instalação por item: ip p/ descoberta de rede; fullName
+  // p/ conexões ocultas (UNC); nome p/ filas locais
+  return f.ip||f.fullName||f.name||String(idx);
+}
+function foundPort(f){
+  return (f.ports&&f.ports.length)?(f.ports.indexOf(9100)>=0?9100:f.ports[0]):9100;
+}
+function foundCard(f,idx){
+  var key=discKey(f,idx);
+  var model=bestPrinterName(f);
+  var srcBadge={ipp:'IPP','ipp-name':'IPP',pjl:'PJL',lpd:'LPD',http:'HTTP'}[f.modelSource]||'';
+  if(f.type==='connection')srcBadge='PER-USER';
+  else if(f.type==='published')srcBadge='AD';
+  var conn=(f.type==='connection'||f.type==='published'); // já instaladas na máquina: card informativo, sem instalar
+  var det=[];
+  if(f.hiddenReason)det.push(f.hiddenReason+(f.visibleInInventory===false?' · NÃO visível no inventário':''));
+  if(f.ports&&f.ports.length)det.push('portas: '+f.ports.join(', '));
+  if(f.printerName&&f.type!=='connection'&&!(/^(ipp|ipps|print|ipp\/print)$/i).test(f.printerName))det.push('fila: '+f.printerName);
+  if(f.rp)det.push('fila (rp): '+f.rp); // mDNS TXT: caminho da fila no host
+  if(f.firmware)det.push('firmware: '+f.firmware);
+  if(f.hostname)det.push(f.hostname);
+  var h='<div class="foundcard">'
+    +(conn?'':'<input type="checkbox" data-act="toggleSel" data-key="'+esc(key)+'">')
+    +'<div class="ip">'+esc(f.ip||f.server||'local')+'</div>'
+    +'<div style="flex:1"><div><b>'+esc(model)+'</b>'+(srcBadge?(' <span class="badge">'+esc(srcBadge)+'</span>'):'')+'</div>'
+    +(det.length?'<div class="muted">'+esc(det.join(' · '))+'</div>':'')
+    +'</div>'
+    +(conn?'':'<button class="btn btn-sm btn-primary" data-act="showInstall" data-name="'+esc(key)+'">Instalar</button>')
+    +'</div>';
+  return h;
 }
 function toggleSel(ip){
   if(_selected[ip])delete _selected[ip];else _selected[ip]=true;
@@ -685,17 +713,21 @@ function bestPrinterName(f){
   var useless=/^(ipp|ipps|print|ipp\/print)$/i;
   if(f.model)return f.model;
   if(f.printerName&&!useless.test(f.printerName))return f.printerName;
+  if(f.name)return f.name; // itens hidden (conexão/fila publicada) trazem o nome da fila
   if(f.hostname)return f.hostname.split('.')[0];
   return 'Impressora_'+f.ip.replace(/\./g,'-');
 }
-function showInstall(ip){
-  var f=_found.find(function(x){return x.ip===ip;})||{};
-  $('instIp').value=ip;
+function showInstall(key){
+  var f=discItem(key);
+  $('instIp').value=f.ip||key;
   $('instHost').value=f.hostname||'—';
   $('instName').value=bestPrinterName(f);
-  $('instPort').value=(f.ports&&f.ports.length)?(f.ports.indexOf(9100)>=0?9100:f.ports[0]):9100;
+  $('instPort').value=foundPort(f);
   if(!_drivers.length)send('listDrivers');
   $('dlgInstall').showModal();
+}
+function discItem(key){
+  return _found.find(function(x,i){return discKey(x,i)===key;})||{};
 }
 function doInstallFound(){
   var ip=$('instIp').value,name=$('instName').value.trim(),driver=$('instDriver').value,port=parseInt($('instPort').value,10)||9100;
@@ -707,20 +739,19 @@ function doInstallFound(){
 }
 var _batch={total:0,done:0,ok:0,fail:0};
 function installSelected(){
-  var ips=Object.keys(_selected);
-  if(!ips.length)return;
+  var keys=Object.keys(_selected);
+  if(!keys.length)return;
   if(!_drivers.length){toast('Carregue os drivers primeiro (aba Portas & Drivers)',true);return;}
   var driver=prompt('Driver para TODAS as selecionadas (ex: HP Universal Printing PCL 6):','');
   if(!driver)return;
   var basePort=parseInt(prompt('Porta TCP padrão (9100; hosts sem 9100 usam a melhor porta achada):','9100'),10)||9100;
-  _batch={total:ips.length,done:0,ok:0,fail:0};
-  $('discInfo').textContent='Instalando 0/'+ips.length+'...';
-  ips.forEach(function(ip,idx){
+  _batch={total:keys.length,done:0,ok:0,fail:0};
+  $('discInfo').textContent='Instalando 0/'+keys.length+'...';
+  keys.forEach(function(key,idx){
     setTimeout(function(){
-      var f=_found.find(function(x){return x.ip===ip;})||{};
+      var f=discItem(key);
       var name=bestPrinterName(f);
-      var p2=(f.ports&&f.ports.length)?(f.ports.indexOf(9100)>=0?9100:f.ports[0]):basePort;
-      send('addFoundPrinter',{ip:ip,name:name,driver:driver,port:p2,_batch:true});
+      send('addFoundPrinter',{ip:f.ip||key,name:name,driver:driver,port:foundPort(f)||basePort,_batch:true});
     },idx*2000);
   });
 }
