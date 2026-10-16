@@ -671,7 +671,7 @@ var handlers = {
     },
 
     // Descoberta de impressoras SEM varredura de rede (v1.1.9).
-    // Dois modos nativos (mode=wsd|ad|tcp):
+    // Modos nativos (mode=wsd|ad|tcp|mdns):
     //  - wsd: WS-Discovery (mesmo protocolo do wizard "Adicionar impressora" do
     //    Windows) — 1 pacote multicast UDP 3702, respostas em ~2-10s. Zero flood.
     //  - ad: printQueue publicados no Active Directory via LDAP — impressoras
@@ -817,6 +817,113 @@ var handlers = {
                 "  } " +
                 "} " +
                 "$__json = '[]'; if ($out) { $__json = @($out) | ConvertTo-Json -Depth 3 -Compress } " +
+                "Write-Output ('" + SENTINEL + "' + $__json);";
+        } else if (mode === 'mdns') {
+            // Bonjour/mDNS (v1.3.0, spec Apple Bonjour Printing 1.0.2):
+            // query PTR por tipo de serviço em 224.0.0.251:5353, coleta respostas
+            // (PTR/SRV/TXT/TXT- adicional/ANY chegam no mesmo fluxo de resposta).
+            // Dedupe por NOME DE INSTÂNCIA: a mesma impressora anuncia _ipp._tcp,
+            // _printer._tcp, _pdl-datastream._tcp com o MESMO service name — é 1
+            // dispositivo com vários serviços (services[] merge).
+            var mdnsWindow = 3000; // janela fixa: respostas típicas <1-2s; 3s cobre retransmissão
+            script = PS_HEAD +
+                "$out = @{}; $reg = @{}; " + // reg: instance name → {services:[], txt:..., srv:...}
+                "$ifip = $null; " +
+                "try { " +
+                "  $ips = Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '169.254*' -and $_.IPAddress -ne '127.0.0.1' -and $_.InterfaceAlias -notlike '*vEthernet*' -and $_.InterfaceAlias -notlike '*Loopback*' }; " +
+                "  $defaultIf = (Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1).InterfaceAlias; " +
+                "  $ifip = ($ips | Where-Object { $_.InterfaceAlias -eq $defaultIf } | Select-Object -First 1).IPAddress; " +
+                "} catch {}; " +
+                "try { " +
+                "  $udp = New-Object System.Net.Sockets.UdpClient; " +
+                "  $udp.Client.ReceiveTimeout = 500; " + // loop curto: controla a janela pelo stopwatch
+                "  $joined = $false; " +
+                "  if ($ifip) { try { $udp.Client.SetSocketOption([System.Net.Sockets.SocketOptionLevel]::IP, [System.Net.Sockets.SocketOptionName]::AddMembership, New-Object System.Net.MulticastOption([System.Net.IPAddress]'224.0.0.251', [System.Net.IPAddress]$ifip)); $joined = $true } catch {} } " +
+                "  if (-not $joined) { try { $udp.Client.SetSocketOption([System.Net.Sockets.SocketOptionLevel]::IP, [System.Net.Sockets.SocketOptionName]::AddMembership, New-Object System.Net.MulticastOption([System.Net.IPAddress]'224.0.0.251')); } catch {} } " +
+                "  $bindEp = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0); " +
+                "  $udp.Client.Bind($bindEp); " +
+                "  $mdnsEp = New-Object System.Net.IPEndPoint([System.Net.IPAddress]'224.0.0.251', 5353); " +
+                // query PTR: QNAME=<n>_tcp.local, QTYPE=12 (PTR), QCLASS=1
+                "  function MdnsQnameBytes($svc) { " +
+                "    $labels = @(); $parts = $svc.Split('.'); foreach ($p in $parts) { if ($p) { $b = [Text.Encoding]::ASCII.GetBytes($p); $labels += ,([byte]$b.Length) + $b } }; $labels += ,([byte]4) + [Text.Encoding]::ASCII.GetBytes('local'); $labels += ,([byte]0); " +
+                "    $ms = New-Object System.IO.MemoryStream; $bw = New-Object System.IO.BinaryWriter($ms); foreach ($seg in $labels) { $bw.Write([byte[]]@($seg)) }; $bw.Flush(); return $ms.ToArray() " +
+                "  } " +
+                "  $svcs = @('_ipp._tcp', '_ipps._tcp', '_printer._tcp', '_pdl-datastream._tcp'); " +
+                "  $txId = 0; " +
+                "  foreach ($svc2 in $svcs) { " +
+                "    $qn = MdnsQnameBytes $svc2; " +
+                "    $txId = ($txId + 1) -band 0xFFFF; " +
+                "    $msq = New-Object System.IO.MemoryStream; $bwq = New-Object System.IO.BinaryWriter($msq); " +
+                "    $bwq.Write([byte[]]@(0x00, [byte]$txId)); $bwq.Write([byte[]]@(0x00, 0x00)); $bwq.Write([byte[]]@(0x00, 0x01)); $bwq.Write([byte[]]@(0x00, 0x00)); $bwq.Write([byte[]]@(0x00, 0x00)); $bwq.Write([byte[]]@(0x00, 0x00)); " +
+                "    $bwq.Write($qn); $bwq.Write([byte[]]@(0x00, 12)); $bwq.Write([byte[]]@(0x00, 0x01)); $bwq.Flush(); " +
+                "    $qb = $msq.ToArray(); [void]$udp.Send($qb, $qb.Length, $mdnsEp); " +
+                "  } " +
+                "  $swm = [System.Diagnostics.Stopwatch]::StartNew(); " +
+                "  while ($swm.Elapsed.TotalMilliseconds -lt " + mdnsWindow + ") { " +
+                "    try { " +
+                "      $repEp = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0); " +
+                "      $rb = $udp.Receive([ref]$repEp); " +
+                "      if ($rb -and $rb.Length -gt 12) { " +
+                // ---- parse mDNS: header 12B, depois records nome-terminado-em-0x00 (sem compressão p/ segurar o parser: pular records com ponteiro 0xC0) ----
+                "        $skip = $false; " +
+                "        try { " +
+                "          $qdcount = (($rb[4] -shl 8) -bor $rb[5]); $ancount = (($rb[6] -shl 8) -bor $rb[7]); " +
+                "          if ($qdcount -gt 0) { $skip = $true } " + // é PERGUNTA, não resposta
+                "          $off = 12; " +
+                "          for ($ai = 0; $ai -lt $ancount; $ai++) { " +
+                "            if ($off -ge $rb.Length) { break } " +
+                "            if ($rb[$off] -band 0xC0) { $skip = $true; break } " + // nome comprimido: fora do escopo do parser leve
+                "            while ($off -lt $rb.Length -and $rb[$off] -ne 0) { $off += 1 + $rb[$off] } " +
+                "            $off += 1; " +
+                "            if ($off + 10 -gt $rb.Length) { break } " +
+                "            $rtype = (($rb[$off] -shl 8) -bor $rb[$off + 1]); " +
+                "            $rdl = (($rb[$off + 8] -shl 8) -bor $rb[$off + 9]); " +
+                "            $rdo = $off + 10; " +
+                "            if ($rdo + $rdl -gt $rb.Length) { break } " +
+                // nome da instância = labels do OWNER name (antes do tipo)
+                "            $nmOff = 12; $nameParts = @(); " +
+                "            while ($nmOff -lt $rb.Length -and $rb[$nmOff] -ne 0) { $L = $rb[$nmOff]; $nameParts += [Text.Encoding]::UTF8.GetString($rb, $nmOff + 1, $L); $nmOff += 1 + $L } " +
+                "            if ($nameParts.Count -ge 3) { " +
+                "              $inst = $nameParts[0]; $svcName = $nameParts[1] + '.' + $nameParts[2]; " +
+                "              if (-not $reg.ContainsKey($inst)) { $reg[$inst] = @{ services = @(); rp = $null; ty = $null; product = $null; usbmfg = $null; usbmdl = $null; uuid = $null; note = $null; host = $null; port = $null; proto = $null } } " +
+                "              $protoMap = @{ '_ipp._tcp' = 'ipp'; '_ipps._tcp' = 'ipps'; '_printer._tcp' = 'lpr'; '_pdl-datastream._tcp' = 'raw9100' }; " +
+                "              if ($protoMap.ContainsKey($svcName) -and $reg[$inst].services -notcontains $protoMap[$svcName]) { $reg[$inst].services += $protoMap[$svcName] } " +
+                "              if ($rtype -eq 33) { " + // SRV: priority(2) weight(2) port(2) target
+                "                $reg[$inst].port = (($rb[$rdo + 4] -shl 8) -bor $rb[$rdo + 5]); " +
+                "                $tOff = $rdo + 6; $tParts = @(); while ($tOff -lt $rb.Length -and $rb[$tOff] -ne 0 -and ($rb[$tOff] -band 0xC0) -eq 0) { $tl = $rb[$tOff]; $tParts += [Text.Encoding]::UTF8.GetString($rb, $tOff + 1, $tl); $tOff += 1 + $tl } " +
+                "                $reg[$inst].host = ($tParts -join '.'); " +
+                "              } elseif ($rtype -eq 16) { " + // TXT: length-byte + k=v
+                "                $tOff = $rdo; $tEnd = $rdo + $rdl; " +
+                "                while ($tOff -lt $tEnd) { $kl = $rb[$tOff]; if ($kl -le 0 -or $tOff + 1 + $kl -gt $tEnd) { break } " +
+                "                  $kv = [Text.Encoding]::UTF8.GetString($rb, $tOff + 1, $kl); $tOff += 1 + $kl; " +
+                "                  $eq = $kv.IndexOf('='); if ($eq -gt 0) { $k = $kv.Substring(0, $eq).ToLower(); $v = $kv.Substring($eq + 1); " +
+                "                    switch ($k) { " +
+                "                      'rp' { $reg[$inst].rp = $v } 'ty' { $reg[$inst].ty = $v } 'product' { $reg[$inst].product = $v } " +
+                "                      'usb_mfg' { $reg[$inst].usbmfg = $v } 'usb_mdl' { $reg[$inst].usbmdl = $v } 'uuid' { $reg[$inst].uuid = $v } 'note' { $reg[$inst].note = $v } " +
+                "                    } " +
+                "                  } " +
+                "                } " +
+                "              } " +
+                "            } " +
+                "            $off = $rdo + $rdl; " +
+                "          } " +
+                "        } catch { $skip = $true } " +
+                "      } " +
+                "    } catch { } " + // timeout do Receive (500ms): volta pro while da janela
+                "  } " +
+                "  $udp.Close(); " +
+                "  foreach ($k in $reg.Keys) { " +
+                "    $e = $reg[$k]; " +
+                "    if ($e.services.Count -eq 0) { continue } " +
+                "    $model = $e.ty; if (-not $model) { $model = $e.product } if (-not $model -and $e.usbmfg -and $e.usbmdl) { $model = ($e.usbmfg + ' ' + $e.usbmdl) } " +
+                "    $out[$k] = [pscustomobject]@{ " +
+                "      name=$k; host=$e.host; model=$model; " +
+                "      printerName=$k; uuid=$e.uuid; rp=$e.rp; note=$e.note; " +
+                "      services=@($e.services); source=@('mdns'); hidden=$false " +
+                "    } " +
+                "  } " +
+                "} catch { $out['@error'] = [pscustomobject]@{ error=('mDNS: ' + $_.Exception.Message); source=@('mdns'); hidden=$false } } " +
+                "$__json = '[]'; if ($out.Count) { $__json = @($out.Values) | ConvertTo-Json -Depth 4 -Compress } " +
                 "Write-Output ('" + SENTINEL + "' + $__json);";
         } else {
             // wsd (padrão): WS-Discovery Probe via UdpClient, sem flood e sem processo extra

@@ -1,4 +1,5 @@
 *.db
 *.db~
+spooler-plugin.txt
 node_modules/
 .DS_Store

@@ -1,6 +1,8 @@
 # Changelog — Spooler Plugin MeshCentral
 
 ## Unreleased
+### Added (F1 — mDNS experimental)
+- **Descoberta mDNS/Bonjour** (`mode=mdns`, `modules_meshcore/spooler.js:discover`): query PTR por `_ipp/_ipps/_printer/_pdl-datastream._tcp` em 224.0.0.251:5353 (janela 3s), dedupe por NOME DE INSTÂNCIA com merge de serviços (`services[]`), TXT `rp/ty/product/usb_MFG/usb_MDL/UUID/note` e SRV (host/porta). **Experimental — requer rede sem bloqueio de multicast**: POC 2026-10-15 confirmou que o AP do ambiente de referência bloqueia multicast (mDNS sem resposta; unicast direto com flag QU, RFC 6762 §6.7, também sem resposta). Papel definido: enriquecimento OPCIONAL em redes sãs — a descoberta primária universal é a varredura TCP (F2).
 ### Changed (plugin-lib)
 - `lib/plugin-acl.js` e `modules_meshcore/na-journal.js` agora são **vendor gerado** de [plugin-lib](../plugin-lib) v0.3.0 (`vendor/plugin-lib/` + `modules_meshcore/na-journal.js` com cabeçalho sha384 — NÃO EDITAR); novo `tests/unit/vendor-integrity.test.js` valida o hash. Fonte: `Plugins/plugin-lib` (edite `src/` e rode `tools/sync.js`).
 ### Fixed (P2-b — XSS nos views)
