@@ -689,7 +689,11 @@ var handlers = {
         var waitMs = Math.min(Math.max(timeout * 4, 2000), 8000);
         // Orçamento total de enriquecimento (s): identificação POR PORTA fica
         // dentro disso — hosts além do orçamento saem só com ports[].
-        var enrBudget = Math.min(Math.max(timeout * 5, 20), 40);
+        // params.budget: override usado pelo orquestrador (mode=auto) p/ caber
+        // no orçamento global de 90s.
+        var enrBudget = (params.budget != null)
+            ? Math.min(Math.max(parseInt(params.budget, 10) || 5, 5), 40)
+            : Math.min(Math.max(timeout * 5, 20), 40);
         var script;
         if (mode === 'ad') {
             script = PS_HEAD +
@@ -996,6 +1000,58 @@ var handlers = {
                 "} catch { $out += [pscustomobject]@{ error=('Published: ' + $_.Exception.Message); source=@('hidden-published'); hidden=$false } } " +
                 "$__json = '[]'; if ($out) { $__json = @($out) | ConvertTo-Json -Depth 3 -Compress } " +
                 "Write-Output ('" + SENTINEL + "' + $__json);";
+        } else if (mode === 'auto') {
+            // F4 — orquestrador: hidden → tcp → wsd → mdns com orçamento TOTAL
+            // de 90s. Cada modo roda pelo handler já existente (fontes
+            // separadas); merge com dedupe (ip p/ tcp+wsd, fullName p/ hidden,
+            // nome de instância p/ mdns) e união de sources. partial:true +
+            // warnings[] quando um modo falha ou não cabe no orçamento.
+            var totalBudget = 90;
+            var tAuto = Date.now();
+            var autoWarn = [];
+            var autoPartial = false;
+            var merged = [], byKey = {};
+            function autoFinish() {
+                res({ ok: true, result: merged, mode: 'auto', partial: autoPartial, warnings: (autoWarn.length ? autoWarn : undefined) });
+            }
+            function autoMerge(items, m) {
+                if (!Array.isArray(items)) return;
+                for (var ii = 0; ii < items.length; ii++) {
+                    var it = items[ii];
+                    if (!it) continue;
+                    if (it.error) { autoWarn.push(m + ': ' + it.error); autoPartial = true; continue; }
+                    var key = it.ip ? ('ip:' + it.ip) : (it.fullName ? ('n:' + it.fullName) : ('nm:' + it.name));
+                    var prev = byKey[key];
+                    if (!prev) { byKey[key] = it; merged.push(it); continue; }
+                    for (var f2 in it) { if (it[f2] != null && prev[f2] == null) prev[f2] = it[f2]; }
+                    var sl = [].concat(prev.source || [], it.source || []), ss = {};
+                    for (var si = 0; si < sl.length; si++) ss[sl[si]] = true;
+                    prev.source = Object.keys(ss);
+                }
+            }
+            var steps = ['hidden', 'tcp', 'wsd', 'mdns'];
+            var stepIdx = 0;
+            function runAutoStep() {
+                if (stepIdx >= steps.length) { autoFinish(); return; }
+                var m2 = steps[stepIdx++];
+                var remaining = totalBudget - (Date.now() - tAuto) / 1000;
+                if (remaining < 5) { autoWarn.push(m2 + ': não executado (orçamento de ' + totalBudget + 's)'); autoPartial = true; runAutoStep(); return; }
+                var p2 = { mode: m2 };
+                if (m2 === 'tcp') {
+                    p2.range = params.range || '';
+                    p2.timeout = String(Math.min(timeout, 1000));
+                    // enriquecimento recebe o que sobrar menos 25s reservados
+                    // aos modos seguintes (wsd+mdns+hidden+spawn)
+                    p2.budget = String(Math.max(5, Math.min(30, Math.floor(remaining - 25))));
+                }
+                handlers.discover(nodeid, reqid, p2, function (r2) {
+                    if (!r2.ok) { autoWarn.push(m2 + ': ' + (r2.error || 'falhou')); autoPartial = true; }
+                    else autoMerge(r2.result || [], m2);
+                    runAutoStep();
+                });
+            }
+            runAutoStep();
+            return;
         } else {
             // wsd (padrão): WS-Discovery Probe via UdpClient, sem flood e sem processo extra
             var wsdTimeout = Math.min(Math.max(timeout * 6, 4000), 12000);
@@ -1236,6 +1292,7 @@ function consoleaction(args, rights, sessionid, parent) {
             reply(null, {
                 reqid: reqid, op: op, ok: result.ok,
                 result: result.result || null, error: result.error || null,
+                    partial: result.partial || undefined, warnings: result.warnings || undefined,
                 target: params.name || params.ip || params.oldName || null
             });
         });

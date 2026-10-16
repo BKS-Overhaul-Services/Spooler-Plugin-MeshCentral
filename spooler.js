@@ -330,6 +330,8 @@ module.exports.spooler = function (parent) {
                     action: 'plugin', plugin: 'spooler', method: 'agentResult',
                     op: command.op || p.op, nodeid: p.nodeid, reqid: reqid,
                     ok: command.ok, result: command.result, error: command.error,
+                    partial: command.partial || undefined,
+                    warnings: command.warnings || undefined,
                     _batch: p.batch || undefined
                 });
                 return;
