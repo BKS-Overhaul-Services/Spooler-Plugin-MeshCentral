@@ -5,10 +5,10 @@
   "author": "Misael Filho",
   "description": "Gerenciamento centralizado de impressoras Windows via MeshCentral: CRUD de impressoras, portas e drivers, descoberta multi-fonte (varredura TCP 9100+631+515 com identificação IPP/PJL/LPD/HTTP, WSD, Active Directory, mDNS experimental, impressoras ocultas — conexões per-user e filas publicadas — e modo automático com orçamento de 90s), instalação automática em lote, filas de impressão, controle do serviço de spooler, página de teste e acesso ao painel web da impressora. v1.2: result-journal. v1.3: descoberta multi-fonte.",
   "hasAdminPanel": true,
-  "homepage": "https://github.com/BKS-Overhaul-Services/Spooler-Plugin-MeshCentral/tree/feature/result-journal",
-  "changelogUrl": "https://raw.githubusercontent.com/BKS-Overhaul-Services/Spooler-Plugin-MeshCentral/feature/result-journal/changelog.md",
-  "configUrl": "https://raw.githubusercontent.com/BKS-Overhaul-Services/Spooler-Plugin-MeshCentral/feature/result-journal/config.json",
-  "downloadUrl": "https://github.com/BKS-Overhaul-Services/Spooler-Plugin-MeshCentral/archive/refs/heads/feature/result-journal.zip",
+  "homepage": "https://github.com/BKS-Overhaul-Services/Spooler-Plugin-MeshCentral/tree/main",
+  "changelogUrl": "https://raw.githubusercontent.com/BKS-Overhaul-Services/Spooler-Plugin-MeshCentral/main/changelog.md",
+  "configUrl": "https://raw.githubusercontent.com/BKS-Overhaul-Services/Spooler-Plugin-MeshCentral/main/config.json",
+  "downloadUrl": "https://github.com/BKS-Overhaul-Services/Spooler-Plugin-MeshCentral/archive/refs/heads/main.zip",
   "repository": {
     "type": "git",
     "url": "https://github.com/BKS-Overhaul-Services/Spooler-Plugin-MeshCentral.git"
