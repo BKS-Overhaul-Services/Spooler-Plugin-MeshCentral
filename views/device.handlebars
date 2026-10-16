@@ -103,7 +103,7 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
       <select id="discMode" style="min-width:250px" onchange="discModeChanged()">
         <option value="wsd">WSD — nativo (como o wizard do Windows)</option>
         <option value="ad">Active Directory — impressoras do domínio</option>
-        <option value="tcp">Varredura TCP 9100 (último recurso)</option>
+        <option value="tcp">Varredura TCP — 9100 + 631 + 515 (universal)</option>
       </select>
       <input type="text" id="discRange" placeholder="range p/ TCP: 192.168.0" style="width:200px;display:none">
       <select id="discTimeout" style="display:none"><option value="1000">Timeout 1s</option><option value="2000">2s</option><option value="500">0.5s</option></select>
@@ -607,12 +607,12 @@ function discModeChanged(){
   $('discTimeout').style.display=isTcp?'':'none';
   var hints={wsd:'WSD: multicast local (~5s). Impressoras precisam estar ligadas e na mesma VLAN.',
     ad:'AD: lista impressoras publicadas no domínio (print servers). Não precisa varredura.',
-    tcp:'TCP: varre a sub-rede na porta 9100 (RAW). Mais lento; último recurso.'};
+    tcp:'TCP: varre 9100+631+515 e identifica via IPP/PJL/LPD/HTTP. Funciona mesmo com multicast bloqueado no AP.'};
   $('discHint').textContent=hints[_discMode]||'';
 }
 function startDiscover(){
   var mode=_discMode;
-  var msg={wsd:'Procurando impressoras via WSD (até ~12s)...',ad:'Consultando Active Directory...',tcp:'Varrendo sub-rede porta 9100 (até ~10s)...'};
+  var msg={wsd:'Procurando impressoras via WSD (até ~12s)...',ad:'Consultando Active Directory...',tcp:'Varrendo sub-rede (9100+631+515; identificação IPP/PJL/LPD — ~20-40s)...'};
   $('discResult').innerHTML='<div class="loading">'+(msg[mode]||'Procurando...')+'</div>';
   $('discInfo').textContent='';
   $('installSelBtn').disabled=true;
@@ -627,7 +627,7 @@ function renderFound(list,mode){
   if(!_found.length){
     var empty={wsd:'Nenhuma impressora respondeu ao WSD. Verifique se estão ligadas, na mesma VLAN (multicast 239.255.255.250:3702 liberado) e com WSD habilitado. Alternativa: tente "Active Directory" ou "TCP 9100".',
       ad:'Nenhuma printQueue no Active Directory (nenhum print server publicou impressoras no domínio). Tente "WSD" ou "TCP 9100".',
-      tcp:'Nenhum host com porta 9100 aberta na sub-rede.'};
+      tcp:'Nenhum host com portas 9100/631/515 abertas na sub-rede.'};
     $('discResult').innerHTML='<div class="empty">'+esc(empty[mode]||'Nada encontrado.')+'</div>';return;}
   $('discInfo').textContent=_found.length+' encontrada(s)';
   if(mode==='ad'){
@@ -657,8 +657,9 @@ function renderFound(list,mode){
   _found.forEach(function(f){
     var key=f.ip;
     var model=bestPrinterName(f);
-    var srcBadge={ipp:'IPP','ipp-name':'IPP',pjl:'PJL',http:'HTTP'}[f.modelSource]||'';
+    var srcBadge={ipp:'IPP','ipp-name':'IPP',pjl:'PJL',lpd:'LPD',http:'HTTP'}[f.modelSource]||'';
     var det=[];
+    if(f.ports&&f.ports.length)det.push('portas: '+f.ports.join(', '));
     if(f.printerName&&!(/^(ipp|ipps|print|ipp\/print)$/i).test(f.printerName))det.push('fila: '+f.printerName);
     if(f.firmware)det.push('firmware: '+f.firmware);
     if(f.hostname)det.push(f.hostname);
@@ -692,6 +693,7 @@ function showInstall(ip){
   $('instIp').value=ip;
   $('instHost').value=f.hostname||'—';
   $('instName').value=bestPrinterName(f);
+  $('instPort').value=(f.ports&&f.ports.length)?(f.ports.indexOf(9100)>=0?9100:f.ports[0]):9100;
   if(!_drivers.length)send('listDrivers');
   $('dlgInstall').showModal();
 }
@@ -710,14 +712,15 @@ function installSelected(){
   if(!_drivers.length){toast('Carregue os drivers primeiro (aba Portas & Drivers)',true);return;}
   var driver=prompt('Driver para TODAS as selecionadas (ex: HP Universal Printing PCL 6):','');
   if(!driver)return;
-  var port=parseInt(prompt('Porta TCP (padrão 9100):','9100'),10)||9100;
+  var basePort=parseInt(prompt('Porta TCP padrão (9100; hosts sem 9100 usam a melhor porta achada):','9100'),10)||9100;
   _batch={total:ips.length,done:0,ok:0,fail:0};
   $('discInfo').textContent='Instalando 0/'+ips.length+'...';
   ips.forEach(function(ip,idx){
     setTimeout(function(){
       var f=_found.find(function(x){return x.ip===ip;})||{};
       var name=bestPrinterName(f);
-      send('addFoundPrinter',{ip:ip,name:name,driver:driver,port:port,_batch:true});
+      var p2=(f.ports&&f.ports.length)?(f.ports.indexOf(9100)>=0?9100:f.ports[0]):basePort;
+      send('addFoundPrinter',{ip:ip,name:name,driver:driver,port:p2,_batch:true});
     },idx*2000);
   });
 }

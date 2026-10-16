@@ -676,8 +676,10 @@ var handlers = {
     //    Windows) — 1 pacote multicast UDP 3702, respostas em ~2-10s. Zero flood.
     //  - ad: printQueue publicados no Active Directory via LDAP — impressoras
     //    compartilhadas por print servers do domínio, sem RSAT (System.DirectoryServices).
-    //  - tcp: fallback — TCP ConnectAsync porta 9100 na sub-rede (1 processo,
-    //    sockets async; histórico BSOD v1.1.8 foi por Start-Job, corrigido).
+    //  - tcp: varredura universal (F2) — TCP ConnectAsync em 9100+631+515 na
+    //    sub-rede (1 processo, 762 sockets async; anti-BSOD v1.1.8: sem
+    //    Start-Job), identificação POR PORTA: IPP → PJL → LPD → HTTP, com
+    //    orçamento de tempo e ports[] por host.
     discover: function (nodeid, reqid, params, res) {
         var mode = String(params.mode || 'wsd');
         var range = q(params.range || '');
@@ -685,6 +687,9 @@ var handlers = {
         if (isNaN(timeout) || timeout < 500) timeout = 1000;
         if (timeout > 2000) timeout = 2000;
         var waitMs = Math.min(Math.max(timeout * 4, 2000), 8000);
+        // Orçamento total de enriquecimento (s): identificação POR PORTA fica
+        // dentro disso — hosts além do orçamento saem só com ports[].
+        var enrBudget = Math.min(Math.max(timeout * 5, 20), 40);
         var script;
         if (mode === 'ad') {
             script = PS_HEAD +
@@ -722,17 +727,26 @@ var handlers = {
                 "  if ($ip) { $range = ($ip.Split('.')[0..2] -join '.') } " +
                 "}; " +
                 "if ($range) { " +
+                "  $ports = @(9100,631,515); " +
                 "  $conns = @{}; $tasks = @{}; " +
                 "  foreach ($i in 1..254) { " +
-                "    $t = \"$range.$i\"; " +
-                "    $c = New-Object System.Net.Sockets.TcpClient; " +
-                "    $conns[$t] = $c; " +
-                "    $tasks[$t] = $c.ConnectAsync($t, 9100); " +
+                "    $ipx = \"$range.$i\"; " +
+                "    try { $ipo = [System.Net.IPAddress]::Parse($ipx) } catch { continue }; " +
+                "    foreach ($p2 in $ports) { " +
+                "      $t = $ipx + ':' + $p2; " +
+                "      $c = New-Object System.Net.Sockets.TcpClient; " +
+                "      $conns[$t] = $c; " +
+                "      $tasks[$t] = $c.ConnectAsync($ipo, $p2); " +
+                "    } " +
                 "  }; " +
-                "  [void][System.Threading.Tasks.Task]::WaitAll(@($tasks.Values), " + waitMs + "); " +
-                "  $found = @(); " +
+                "  try { [void][System.Threading.Tasks.Task]::WaitAll(@($tasks.Values), " + waitMs + ") } catch {}; " +
+                "  $byHost = @{}; " +
                 "  foreach ($k in @($conns.Keys)) { " +
-                "    if ($tasks[$k] -and $tasks[$k].Status -eq 'RanToCompletion') { $found += $k }; " +
+                "    if ($tasks[$k] -and $tasks[$k].Status -eq 'RanToCompletion') { " +
+                "      $ix = $k.LastIndexOf(':'); $ip2 = $k.Substring(0, $ix); $pt = [int]$k.Substring($ix + 1); " +
+                "      if (-not $byHost.ContainsKey($ip2)) { $byHost[$ip2] = @() } " +
+                "      $byHost[$ip2] += $pt; " +
+                "    }; " +
                 "    try { $conns[$k].Close() } catch {} " +
                 "  }; " +
                 // enriquecimento v2 (v1.1.11): IPP -> IPPS -> PJL -> HTTP
@@ -782,12 +796,17 @@ var handlers = {
                 "    } catch {} " +
                 "    return $result " +
                 "  } " +
-                "  foreach ($ip2 in $found) { " +
+                "  $deadline = [System.Diagnostics.Stopwatch]::StartNew(); $budget = " + enrBudget + ".0; " +
+                "  foreach ($ip2 in $byHost.Keys) { " +
+                "    $hp2 = @($byHost[$ip2]); " +
+                "    if ($deadline.Elapsed.TotalSeconds -ge $budget) { $out += [pscustomobject]@{ ip=$ip2; hostname=$null; model=$null; printerName=$null; firmware=$null; modelSource=$null; ports=@($hp2); source='tcp' }; continue } " +
                 "    $name2 = $null; $pname = $null; $fw = $null; $src = $null; " +
-                "    $rIpp = Find-IppAttrs $ip2 $false; " +
-                "    if (-not $rIpp) { $rIpp = Find-IppAttrs $ip2 $true } " +
-                "    if ($rIpp) { $name2 = $rIpp.model; $pname = $rIpp.pname; $fw = $rIpp.fw; if ($name2) { $src = 'ipp' } elseif ($pname) { $src = 'ipp-name' } } " +
-                "    if (-not $name2) { " +
+                "    if ($hp2 -contains 631) { " +
+                "      $rIpp = Find-IppAttrs $ip2 $false; " +
+                "      if (-not $rIpp -and $deadline.Elapsed.TotalSeconds -lt $budget) { $rIpp = Find-IppAttrs $ip2 $true } " +
+                "      if ($rIpp) { $name2 = $rIpp.model; $pname = $rIpp.pname; $fw = $rIpp.fw; if ($name2) { $src = 'ipp' } elseif ($pname) { $src = 'ipp-name' } } " +
+                "    } " +
+                "    if (-not $name2 -and $hp2 -contains 9100 -and $deadline.Elapsed.TotalSeconds -lt $budget) { " +
                 "      try { " +
                 "        $pc = New-Object System.Net.Sockets.TcpClient; " +
                 "        if ($pc.ConnectAsync($ip2, 9100).Wait(2000)) { " +
@@ -803,6 +822,21 @@ var handlers = {
                 "      } catch {} " +
                 "      try { $pc.Close() } catch {}; " +
                 "    } " +
+                "    if (-not $name2 -and $hp2 -contains 515 -and $deadline.Elapsed.TotalSeconds -lt $budget) { " +
+                "      try { " +
+                "        $lc = New-Object System.Net.Sockets.TcpClient; " +
+                "        if ($lc.ConnectAsync($ip2, 515).Wait(1500)) { " +
+                "          $ls2 = $lc.GetStream(); $ls2.ReadTimeout = 2500; " +
+                "          $req = [byte[]]@([byte]3) + [Text.Encoding]::ASCII.GetBytes('print') + [byte]10; " +
+                "          $ls2.Write($req, 0, $req.Length); " +
+                "          $lb = New-Object byte[] 1024; $lr = 0; " +
+                "          try { $lr = $ls2.Read($lb, 0, $lb.Length) } catch {} " +
+                "          $lp = ''; if ($lr -gt 1) { $lp = [Text.Encoding]::ASCII.GetString($lb, 1, $lr - 1).Trim([char]10, [char]13) } " +
+                "          if ($lp) { $name2 = $lp; $pname = $lp; $src = 'lpd' } " +
+                "        } " +
+                "      } catch {} " +
+                "      try { $lc.Close() } catch {}; " +
+                "    } " +
                 "    if (-not $name2) { " +
                 "      try { " +
                 "        $hr = Invoke-WebRequest -Uri ('http://' + $ip2 + '/') -TimeoutSec 3 -UseBasicParsing; " +
@@ -813,7 +847,7 @@ var handlers = {
                 "    $rt = [System.Net.Dns]::BeginGetHostEntry($ip2, $null, $null); " +
                 "    $hn = $null; " +
                 "    if ($rt.AsyncWaitHandle.WaitOne(1500)) { try { $hn = ([System.Net.Dns]::EndGetHostEntry($rt)).HostName } catch {} } " +
-                "    $out += [pscustomobject]@{ ip=$ip2; hostname=$hn; model=$name2; printerName=$pname; firmware=$fw; modelSource=$src; source='tcp' } " +
+                "    $out += [pscustomobject]@{ ip=$ip2; hostname=$hn; model=$name2; printerName=$pname; firmware=$fw; modelSource=$src; ports=@($hp2); source='tcp' } " +
                 "  } " +
                 "} " +
                 "$__json = '[]'; if ($out) { $__json = @($out) | ConvertTo-Json -Depth 3 -Compress } " +
